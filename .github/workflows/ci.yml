@@ -17,6 +17,7 @@ jobs:
       - run: cargo test --locked
       - run: python scripts/build_contract.py && git diff --exit-code schemas fixtures
       - run: python tests/http_contract.py
+      - run: python tests/fixture_cli.py
       - uses: actions/checkout@v4
         with:
           repository: nicoechaniz/hermes-memory-kit

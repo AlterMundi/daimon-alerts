@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import signal
 import subprocess
 import tempfile
 import urllib.request
@@ -22,16 +23,19 @@ def configuration(directory):
     return config,credentials
 
 def main():
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, terminate)
     parser=argparse.ArgumentParser(); parser.add_argument('--port',type=int,default=8791); args=parser.parse_args()
     subprocess.run(['cargo','build','--locked'],cwd=ROOT,check=True)
     with tempfile.TemporaryDirectory(prefix='daimon-alerts-fixture-') as tmp:
         directory=Path(tmp); config,credentials=configuration(directory); config['listen']=f'127.0.0.1:{args.port}'
         (directory/'config.json').write_text(json.dumps(config))
         process=subprocess.Popen([str(ROOT/'target/debug/daimon-alerts'),'serve',str(directory/'config.json')])
+        projection=json.loads((ROOT/'fixtures/open.json').read_text()); projection.update(source_at=int(time.time()),updated_at=int(time.time()))
         try:
             for _ in range(100):
                 try:
-                    projection=json.loads((ROOT/'fixtures/open.json').read_text()); projection.update(source_at=int(time.time()),updated_at=int(time.time()))
                     request=urllib.request.Request(f'http://127.0.0.1:{args.port}/v1/incidents/fictional-hmk/credit-failure-001',data=json.dumps(projection).encode(),method='PUT',headers={'Authorization':'Bearer '+credentials['producer'],'Content-Type':'application/json'})
                     urllib.request.urlopen(request,timeout=2).close(); break
                 except OSError: time.sleep(.05)

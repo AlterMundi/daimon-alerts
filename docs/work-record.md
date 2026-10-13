@@ -106,3 +106,16 @@ Telecodex PR86 now uses82a16d019eeb8aafdf0f542d2284a27dd5ad0315; only the new
 Python test filename/CI declaration changed after the real receiving qualification.
 Moved that test into the repository's existing dashboard CI scope to avoid an
 unrelated full Rust suite. Actual receiving code remains the qualified59467e3 bytes.
+
+Native goal continuation: prior turn made progress through deployed core, real
+receipts, qualification and published integration/skill. Rechecked current sources:
+Telecodex PR87 has passing receiving CI and records its operator-owned activation;
+production Sessions still uses the original runtime. Its stronger receiving changes
+remain owned there, rather than restarting that independently owned service here.
+
+Qualified the advertised fixture command itself: it starts a real listener and
+SIGTERM terminates its child without leaving a listener. Fixed startup to retain
+one identical upsert payload across retries, preserving idempotency if acceptance
+succeeds but its reply is lost. This test is now included in core CI. Refreshed the
+maintained requirement's stale pre-implementation status with observed qualification
+and explicit pending adoption, without changing the acceptance requirements.
