@@ -33,8 +33,33 @@ def main():
     def missing_credit(*_): raise ProviderProblem('fictional-provider','fictional-credit-request',{'code':'payment_required','http_status':402})
     def restored(request,_):
         sources=json.loads(request['messages'][1]['content'])['sources']
-        return {'selection':dict(outcome='applied',reason='Fictional qualification event',records=[dict(key='jo',operation='add',shelf='episodes',title='Fictional clamp demonstration',source_ids=[sources[0]['id']])],links=[]),'dispatch':{'model':'fictional','calls':1}}
+        return {'selection':dict(outcome='applied',reason='Fictional qualification event',records=[dict(key='jo',operation='add',shelf='episodes',title='Fictional Jo',source_ids=[sources[0]['id']])],links=[]),'dispatch':{'model':'fictional','calls':1}}
     result=None
+    if args.operation=='recover':
+        # Explicitly repair this driver's own invalid fictional title, retaining
+        # failed attempts. This never changes a producer code/binding guard and
+        # validates the corrected selection against the exact frozen sources.
+        job_path=state/'processor/batch-1.json'
+        if job_path.exists():
+            job=json.loads(job_path.read_text())
+            navigation=job.get('navigation',{})
+            if navigation.get('halted_reason'):
+                from portable_producer import _code_hash
+                from selection_navigation import effective_sources
+                from portable_capture import selected_decision
+                from codex_coordinator import checkpoint
+                if job['code_hash']!=_code_hash():
+                    raise ValueError('pending code changed; select the matching source version')
+                errors=[step.get('feedback',{}).get('selection_error') for step in navigation['steps']]
+                if navigation['halted_reason']!='selection remains invalid after two corrections' or any(error!='title must be an exact recognition phrase in a selected source block' for error in errors):
+                    raise ValueError('unrelated pending failure requires its owning recovery')
+                proposal=restored(job['request'],None)
+                selected_decision(proposal['selection'],effective_sources(job),navigation['canon'])
+                backup=job_path.with_suffix('.invalid-fixture-before.json')
+                if not backup.exists(): backup.write_bytes(job_path.read_bytes())
+                job.setdefault('qualification_corrections',[]).append(dict(reason='fictional_driver_title_corrected',at_ns=time.time_ns()))
+                navigation.pop('halted_reason')
+                checkpoint(job_path,job)
     if args.operation!='status':
         result=process_once(memory,inbox,state/'processor',missing_credit if args.operation=='failure' else restored,binding)
     alerts=Alerts(inbox)
@@ -46,6 +71,8 @@ def main():
     worker=dict(schema='hmk.worker-status/v1',updated_ns=time.time_ns(),state='pending' if not status['healthy'] else 'idle')
     (state/'worker-status.json').write_text(json.dumps(worker))
     receipt=dict(schema='daimon-alerts.fictional-hmk-qualification/v1',operation=args.operation,processing_result=result.get('state') if result else None,source_preserved=source==raw,source_sha256=hashlib.sha256(source).hexdigest(),chapters=chapters,open_incidents=sum(row['state']=='open' for row in status['alerts']),producer_notice_states=[row['delivery'] for row in status['alerts']],real_provider_used=False)
-    (state/f'{args.operation}-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    encoded=json.dumps(receipt,indent=2)+'\n'
+    (state/f'{args.operation}-receipt.json').write_text(encoded)
+    (state/f'{args.operation}-receipt-{time.time_ns()}.json').write_text(encoded)
     print(json.dumps(receipt))
 if __name__=='__main__': main()

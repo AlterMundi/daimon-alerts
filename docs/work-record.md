@@ -62,3 +62,33 @@ and the draft surrounding integration. The mismatch and exact core reference are
 recorded in #82. Earlier mocked-sender tests do not qualify the changed receiver.
 Source UI inspected in Chromium at390px; fictional alert state/readability passed,
 but this does not establish Telegram WebView or current receiving adapter behavior.
+
+Real receiving qualification: existing authenticated bot accepted fictional open
+notice `telegram-9625` and resolution notice `telegram-9651`, via Telecodex
+candidate59467e3bf6d6c7f4a798b69cde7aef517774505f (PR86). Retained service intents
+and receiving receipts remain separate from HMK's pending source-notice field.
+Another receiver pass produced no additional dispatch. Candidate Provider's
+actual operations projection shows resolved, but production Sessions is not yet
+updated and no phone/client reading is claimed.
+
+Explicit fictional HMK recovery produced one chapter; next invocation was idle,
+with exact original source hash retained. Qualification failures are preserved:
+concurrent producer edits first refused code drift; exact pending code hash
+matched393ccf1848b48c8ee820364b9be8bde36ac2e473, extracted only for the necessary
+pinned recovery. The driver then proposed an invalid title absent from its source;
+HMK preserved attempts and halted. Corrected the driver to the literal `Fictional
+Jo`, validated against frozen sources, saved the failed job and explicitly reopened
+only that driver's known title-error halt. No code/binding guard was changed.
+Fresh driver failure/recover/replay qualification passes without manual repair.
+No real provider or live memory corpus was used.
+
+Shared alerts skill merged in Skills PR57 atb6d0170f6a8ec42a9fb8aed6174060b839d4e7ad.
+Selective describe/prepare/apply/status qualification and actual local installation
+passed; neutral surface-check is ok and this native turn read the installed guide.
+Other embodiment adoption is not established by this local installation.
+
+Remaining goal work: production receiving-side integration/phone acceptance,
+production HMK owning adoption, authorized other-embodiment discover/read/publish
+qualification and resource/skill receiving receipts. Do not mark the goal complete
+from the successful fictional loop alone. Existing production Telecodex listener
+and dashboard have not been stopped/redeployed by this work.

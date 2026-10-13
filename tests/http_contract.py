@@ -135,6 +135,23 @@ class Contract(unittest.TestCase):
         self.assertEqual(self.call('GET','/v1/incidents')[1]['items'][0]['freshness'],'stale')
         self.process.terminate(); self.process.communicate(); self.config['max_incidents']=3; self.path.write_text(json.dumps(self.config)); self.start()
         self.assertEqual(self.publish()[1]['error'],'capacity_exceeded')
+    def test_backup_restore_preserves_uncertain_dispatch(self):
+        self.publish()
+        delivery=self.pending()[0]['delivery_id']; claim_path=f'/v1/deliveries/{delivery}/claim'
+        first=self.call('POST',claim_path,{'request_id':'retained-attempt'})
+        self.assertTrue(first[1]['dispatch_allowed'])
+        backup=self.directory/'restore.sqlite'
+        subprocess.run([str(ROOT/'target/debug/daimon-alerts'),'backup',str(self.path),str(backup)],check=True)
+        self.process.terminate(); self.process.communicate()
+        self.config['database']=str(backup);self.path.write_text(json.dumps(self.config));self.start()
+        self.assertFalse(self.call('POST',claim_path,{'request_id':'retained-attempt'})[1]['dispatch_allowed'])
+        self.assertEqual(self.call('GET',self.incident)[1]['deliveries'][0]['state'],'uncertain')
+        self.process.terminate(); self.process.communicate()
+        with sqlite3.connect(backup) as con: con.execute('PRAGMA user_version=99')
+        refused=subprocess.run([str(ROOT/'target/debug/daimon-alerts'),'serve',str(self.path)],capture_output=True,timeout=5)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertNotIn(self.tokens['producer'].encode(),refused.stderr)
+
     def test_observer_death_and_source_failure(self):
         self.assertEqual(self.call('GET','/v1/status')[1]['state'],'unobserved')
         self.process.terminate(); self.process.communicate()
