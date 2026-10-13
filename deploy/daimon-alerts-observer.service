@@ -1,0 +1,17 @@
+[Unit]
+Description=Independent safe HMK incident and worker observer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -B %h/.local/libexec/daimon-alerts/current/scripts/observer.py --config %h/.config/daimon-alerts/observer.json
+UMask=0077
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+MemoryMax=128M
+TasksMax=16
+LimitNOFILE=64
+
+[Install]
+WantedBy=default.target

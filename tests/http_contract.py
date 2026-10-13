@@ -95,7 +95,7 @@ class Contract(unittest.TestCase):
                 except OSError: time.sleep(.03)
             def claim(i): return self.call('POST',path+'/claim',{'request_id':f'attempt-{i}'},base=second_base if i%2 else self.base)
             with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool: results=list(pool.map(claim,range(32)))
-            allowed=[r[1] for r in results if r[1]['dispatch_allowed']]; self.assertEqual(len(allowed),1)
+            allowed=[r[1] for r in results if r[1].get('dispatch_allowed')]; self.assertEqual(len(allowed),1)
             request=allowed[0]['request_id']
             self.process.kill(); self.process.communicate(); self.start()
             self.assertFalse(self.call('POST',path+'/claim',{'request_id':request})[1]['dispatch_allowed'])

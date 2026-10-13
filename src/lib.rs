@@ -20,9 +20,15 @@ fn error(error: Error) -> Response {
         .into_response()
 }
 pub fn router(store: Arc<Store>) -> Router {
+    let admission = Arc::new(tokio::sync::Semaphore::new(16));
     Router::new().fallback(move |request: Request<Body>| {
         let store = store.clone();
+        let admission = admission.clone();
         async move {
+            let permit = match admission.try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => return error(Error(503, "capacity_exceeded")),
+            };
             let token = request
                 .headers()
                 .get("authorization")
@@ -48,11 +54,18 @@ pub fn router(store: Arc<Store>) -> Router {
             {
                 return error(Error(415, "unsupported_media_type"));
             }
-            let body = match to_bytes(request.into_body(), 16384).await {
-                Ok(b) => b,
-                Err(_) => return error(Error(413, "payload_too_large")),
+            let body = match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                to_bytes(request.into_body(), 16384),
+            )
+            .await
+            {
+                Ok(Ok(b)) => b,
+                Ok(Err(_)) => return error(Error(413, "payload_too_large")),
+                Err(_) => return error(Error(503, "unavailable")),
             };
             match tokio::task::spawn_blocking(move || {
+                let _permit = permit;
                 store.handle(&actor, &method, &path, page, &body)
             })
             .await

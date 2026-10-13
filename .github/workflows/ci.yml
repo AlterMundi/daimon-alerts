@@ -17,3 +17,11 @@ jobs:
       - run: cargo test --locked
       - run: python scripts/build_contract.py && git diff --exit-code schemas fixtures
       - run: python tests/http_contract.py
+      - uses: actions/checkout@v4
+        with:
+          repository: nicoechaniz/hermes-memory-kit
+          ref: 54784326ae2091a7d427b64b029274115dc2f041
+          path: .hmk-source
+      - run: python tests/observer_io.py
+        env:
+          ALERTS_TEST_HMK_SOURCE: .hmk-source
