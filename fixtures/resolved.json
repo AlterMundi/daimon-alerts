@@ -1,0 +1,18 @@
+{
+  "schema": "daimon-alerts/v1",
+  "producer_id": "fictional-hmk",
+  "incident_id": "credit-failure-001",
+  "operation_id": "batch-001",
+  "revision": 2,
+  "receiving_scope": "fictional-human",
+  "phase": "index",
+  "resource_ref": "fictional-memory-worker",
+  "severity": "info",
+  "problem_code": "payment_required",
+  "summary": "Fictional pending batch completed after explicit recovery.",
+  "action": "Restore provider credit, then explicitly resume the pending request.",
+  "source_at": 1791880000,
+  "updated_at": 1791880010,
+  "processing_state": "resolved",
+  "work_preserved": true
+}

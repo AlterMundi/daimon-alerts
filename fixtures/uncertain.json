@@ -1,0 +1,6 @@
+{
+  "delivery_id": "fictional-intent",
+  "request_id": "attempt-001",
+  "dispatch_allowed": false,
+  "state": "uncertain"
+}

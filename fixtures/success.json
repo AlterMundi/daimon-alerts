@@ -1,0 +1,8 @@
+{
+  "schema": "daimon-alerts/v1",
+  "producer_id": "fictional-hmk",
+  "incident_id": "credit-failure-001",
+  "revision": 1,
+  "accepted_at": 1791880001,
+  "idempotent": false
+}

@@ -1,0 +1,19 @@
+name: Qualify contract and durable runtime
+on: [push, pull_request]
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r tests/requirements.txt
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: python scripts/build_contract.py && git diff --exit-code schemas fixtures
+      - run: python tests/http_contract.py
