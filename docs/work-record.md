@@ -119,3 +119,13 @@ one identical upsert payload across retries, preserving idempotency if acceptanc
 succeeds but its reply is lost. This test is now included in core CI. Refreshed the
 maintained requirement's stale pre-implementation status with observed qualification
 and explicit pending adoption, without changing the acceptance requirements.
+
+Observed receiving activation by its operator: production Sessions now selects
+1983a929632cb62ea260c96079989152553a45e3 (PR87), process active. Its actual config
+has Alerts enabled, matching scope/adapter, and delivery disabled. Health returns
+200 and anonymous /api/alerts returns401. The installed receiver's authenticated
+operator read reports available/healthy and reads the resolved fictional incident
+with both delivered receipts. This is actual installed read qualification, not a
+phone/signed-browser journey or supervised-send acceptance. This task did not
+restart/redeploy that service. Existing pending phone/adoption actions remain
+unfulfilled; no duplicate request or fabricated acknowledgment is emitted.
