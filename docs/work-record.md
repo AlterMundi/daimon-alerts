@@ -129,3 +129,18 @@ with both delivered receipts. This is actual installed read qualification, not a
 phone/signed-browser journey or supervised-send acceptance. This task did not
 restart/redeploy that service. Existing pending phone/adoption actions remain
 unfulfilled; no duplicate request or fabricated acknowledgment is emitted.
+
+Human assigned final HMK/backend integration to this session; Telegram/Sessions
+remain with Telecodex. Inspected current merged HMK94d2186 interfaces and finite
+supervision handoff. Added explicit oneshot/user-or-system observer selection,
+preserving legacy default bindings and requiring separate state for changed
+semantics. Successful finite completion and pending exit2 no longer appear as
+daemon death; stale/running/crashed/failed-launch observations remain explicit.
+Two targeted observer suites passed. Actual temporary user-systemd units verified
+exit0/idle and exit2/pending as observable, and exit1 as worker_stopped. The first
+real check exposed that systemd discards successful invocation metadata; corrected
+the observer to require the fresh HMK receipt instead of an absent exit-code
+record. Temporary units were removed. No real pool, capture hook, paid request,
+production worker or existing receiver was changed. Published concrete HMK
+connection and complete-path handoff in docs/hmk-integration.md; actual selected
+production binding and full worker-path receiving receipts remain outstanding.

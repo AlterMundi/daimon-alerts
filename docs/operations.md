@@ -44,6 +44,27 @@ worker unit to detect absence; without one, only source age/stall is observed.
 Finite worker completion is not a failed daemon: choose the unit semantics and
 freshness policy for the actual producer launcher.
 
+For `memory_runtime.py` supervised by HMK's finite service, select
+`worker_mode: "oneshot"`, `worker_unit: "hmk-memory-worker.service"` and
+`worker_systemd_scope: "user"` (or `"system"` for a system manager). The observer
+checks LoadState, Type, ActiveState, Result, ExecMainCode and ExecMainStatus.
+A completed exit 0 with an idle/pending receipt is observable; exit 2 preserves
+pending work and is also observable even though systemd marks the unit failed.
+Its provider incident remains open. Systemd may discard successful invocation
+metadata after a unit becomes inactive; a fresh idle/pending HMK receipt is then
+required, and no invocation is inferred from the unit alone. Exit 1, signal death
+or an inactive unit with a running receipt requires attention. Missing/mismatched
+supervision is unreadable. Receipt age still detects overdue observation;
+an active timer does not certify the last worker invocation. Select freshness
+for the actual authorized cadence, including expected maximum runtime and grace.
+The observer never starts the worker or retries a request.
+
+Default behavior remains continuous user-service observation. Changing mode or
+manager changes the retained observation binding: select a new private observer
+state directory and reconcile any prior observation incident explicitly. Preserve
+existing journals, revisions and delivery receipts. No HTTP contract change is
+needed for finite-worker support.
+
 Check `systemctl --user status daimon-alerts.service daimon-alerts-observer.service`,
 then authenticated GET /v1/status and private observer `status.json`. The observer
 is independently supervised, has no dependency that stops it with Alerts, and

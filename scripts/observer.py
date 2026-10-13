@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -60,7 +61,20 @@ class Observer:
         self.db=sqlite3.connect(self.state/'projection.sqlite'); self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('CREATE TABLE IF NOT EXISTS projections(id TEXT PRIMARY KEY,revision INTEGER,content TEXT,accepted INTEGER)')
         self.db.execute('CREATE TABLE IF NOT EXISTS binding(value TEXT PRIMARY KEY)')
-        binding=json.dumps({k:config.get(k) for k in ('producer_id','observer_id','receiving_scope','resource_ref','inbox','inbox_binding','worker_state_dir','worker_unit','base_url')},sort_keys=True)
+        mode=config.get('worker_mode','continuous')
+        scope=config.get('worker_systemd_scope','user')
+        if mode not in ('continuous','oneshot') or scope not in ('user','system'):
+            raise ValueError('unsupported worker supervision')
+        unit=config.get('worker_unit')
+        if unit and not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service',unit):
+            raise ValueError('selected service unit required')
+        if mode=='oneshot' and not unit:
+            raise ValueError('oneshot supervision requires a service unit')
+        selected={k:config.get(k) for k in ('producer_id','observer_id','receiving_scope','resource_ref','inbox','inbox_binding','worker_state_dir','worker_unit','base_url')}
+        # Preserve old default bindings; changed semantics need a new state dir.
+        if mode!='continuous': selected['worker_mode']=mode
+        if scope!='user': selected['worker_systemd_scope']=scope
+        binding=json.dumps(selected,sort_keys=True)
         prior=self.db.execute('SELECT value FROM binding').fetchone()
         if prior and prior[0]!=binding: raise ValueError('observer binding changed; explicit reconciliation required')
         with self.db: self.db.execute('INSERT OR IGNORE INTO binding VALUES(?)',(binding,))
@@ -94,8 +108,32 @@ class Observer:
             if source>int(time.time())+60: raise ValueError()
             unit=self.config.get('worker_unit')
             if unit:
-                observed=subprocess.run(['systemctl','--user','show',unit,'--property=ActiveState','--value'],capture_output=True,text=True,timeout=2)
-                if observed.returncode or observed.stdout.strip() not in ('active','activating'): return 'worker_stopped',source
+                command=['systemctl']
+                if self.config.get('worker_systemd_scope','user')=='user': command.append('--user')
+                command.extend(['show',unit,'--property=LoadState,Type,ActiveState,Result,ExecMainCode,ExecMainStatus'])
+                observed=subprocess.run(command,capture_output=True,text=True,timeout=2)
+                if observed.returncode: return 'observation_unreadable',source
+                properties=dict(line.split('=',1) for line in observed.stdout.splitlines() if '=' in line)
+                if properties.get('LoadState')!='loaded': return 'observation_unreadable',source
+                active=properties.get('ActiveState')
+                if self.config.get('worker_mode','continuous')=='oneshot':
+                    if properties.get('Type')!='oneshot': return 'observation_unreadable',source
+                    if active not in ('active','activating'):
+                        # Successful inactive units may be garbage-collected and
+                        # reloaded with code 0: the fresh HMK receipt is required.
+                        # Exit 2 preserves pending work, not a lost worker.
+                        success=(properties.get('Result')=='success' and
+                                 properties.get('ExecMainStatus')=='0' and
+                                 properties.get('ExecMainCode') in ('0','1'))
+                        pending=(properties.get('Result')=='exit-code' and
+                                 properties.get('ExecMainCode')=='1' and
+                                 properties.get('ExecMainStatus')=='2' and
+                                 worker.get('state')=='pending')
+                        completed=((success or pending) and
+                                   active in ('inactive','failed') and
+                                   worker.get('state') in ('pending','idle'))
+                        if not completed: return 'worker_stopped',source
+                elif active not in ('active','activating'): return 'worker_stopped',source
             age=time.time()-source
             if worker.get('state')=='running' and age>self.config['stalled_seconds']: return 'worker_stalled',source
             if age>self.config['source_freshness_seconds']: return 'observation_stale',source

@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 import unittest
+import tempfile
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts')); sys.path.insert(0,str(ROOT/'tests'))
@@ -58,4 +60,54 @@ class ObserverHTTP(unittest.TestCase):
         self.start(); restored=Observer(config); self.assertEqual(restored.tick()['service_state'],'available')
         restored.db.close(); restored.lock.close()
 
-if __name__=='__main__': unittest.main(defaultTest='ObserverHTTP.test_safe_source_and_observer_faults',verbosity=2)
+class FiniteSupervision(unittest.TestCase):
+    def test_completed_pending_failed_and_overdue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            worker=Path(directory)/'worker-status.json'
+            observer=Observer.__new__(Observer)
+            observer.config=dict(worker_state_dir=directory,worker_unit='hmk-memory-worker.service',
+                                 worker_mode='oneshot',worker_systemd_scope='system',
+                                 source_freshness_seconds=60,stalled_seconds=10)
+            def write(state='idle',age=0):
+                worker.write_text(json.dumps(dict(schema='hmk.worker-status/v1',
+                    updated_ns=time.time_ns()-age*1_000_000_000,state=state)))
+            def observed(**changes):
+                values=dict(LoadState='loaded',Type='oneshot',ActiveState='inactive',
+                            Result='success',ExecMainCode='1',ExecMainStatus='0')
+                values.update(changes)
+                return subprocess.CompletedProcess([],0,'\n'.join(f'{k}={v}' for k,v in values.items()),'')
+            write()
+            with patch('observer.subprocess.run',return_value=observed()) as run:
+                self.assertEqual(observer.source_state()[0],'healthy')
+                self.assertNotIn('--user',run.call_args.args[0])
+                write(age=90)
+                self.assertEqual(observer.source_state()[0],'observation_stale')
+            write('pending')
+            with patch('observer.subprocess.run',return_value=observed(ActiveState='failed',Result='exit-code',ExecMainStatus='2')):
+                self.assertEqual(observer.source_state()[0],'healthy')
+            for result in (observed(ActiveState='failed',Result='exit-code',ExecMainStatus='1'),
+                           observed(ActiveState='failed',Result='signal',ExecMainCode='2',ExecMainStatus='9')):
+                with patch('observer.subprocess.run',return_value=result):
+                    self.assertEqual(observer.source_state()[0],'worker_stopped')
+            with patch('observer.subprocess.run',return_value=observed(ExecMainCode='0')):
+                self.assertEqual(observer.source_state()[0],'healthy')
+            write('idle')
+            with patch('observer.subprocess.run',return_value=observed(ActiveState='failed',Result='exit-code',ExecMainStatus='2')):
+                self.assertEqual(observer.source_state()[0],'worker_stopped')
+            write('running')
+            with patch('observer.subprocess.run',return_value=observed()):
+                self.assertEqual(observer.source_state()[0],'worker_stopped')
+            write('running',age=20)
+            with patch('observer.subprocess.run',return_value=observed(ActiveState='activating')):
+                self.assertEqual(observer.source_state()[0],'worker_stalled')
+            for result in (observed(Type='simple'),observed(LoadState='not-found'),
+                           subprocess.CompletedProcess([],1,'','')):
+                with patch('observer.subprocess.run',return_value=result):
+                    self.assertEqual(observer.source_state()[0],'observation_unreadable')
+            observer.config.update(worker_mode='continuous',worker_systemd_scope='user')
+            write()
+            with patch('observer.subprocess.run',return_value=observed()) as run:
+                self.assertEqual(observer.source_state()[0],'worker_stopped')
+                self.assertIn('--user',run.call_args.args[0])
+
+if __name__=='__main__': unittest.main(defaultTest=['FiniteSupervision','ObserverHTTP'],verbosity=2)
