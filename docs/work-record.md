@@ -92,3 +92,17 @@ production HMK owning adoption, authorized other-embodiment discover/read/publis
 qualification and resource/skill receiving receipts. Do not mark the goal complete
 from the successful fictional loop alone. Existing production Telecodex listener
 and dashboard have not been stopped/redeployed by this work.
+
+Installed supervision fault receipts: stopping only the qualification observer
+made authorized Status degraded/stale; stopping only Alerts left the independent
+observer running and recording service unavailable. Restore returned healthy with
+both Telegram receipts/intents unchanged. A separately supervised fictional worker
+was killed with SIGKILL; the safe observer detected worker_stopped while its last
+running receipt was still fresh. No existing production service or global Stop
+was involved. Latest core CI0ae802d passed:
+https://github.com/AlterMundi/daimon-alerts/actions/runs/38383548770 .
+
+Telecodex PR86 now uses82a16d019eeb8aafdf0f542d2284a27dd5ad0315; only the new
+Python test filename/CI declaration changed after the real receiving qualification.
+Moved that test into the repository's existing dashboard CI scope to avoid an
+unrelated full Rust suite. Actual receiving code remains the qualified59467e3 bytes.
