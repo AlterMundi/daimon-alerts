@@ -38,6 +38,14 @@ Choose `source_freshness_seconds` from the authorized cadence plus expected
 runtime/grace, and `stalled_seconds` from the selected phase runtime budget.
 Observation runs independently of worker invocations and the Mini App.
 
+For the authorized midnight UTC schedule, select `worker_daily_utc: "00:00"`
+and an explicit runtime/grace allowance. The observer compares invocation start,
+not merely receipt update time, against the expected day. Before the first worker
+receipt it reports unobserved/not-started through the existing nonhealthy v1
+projection, even when HMK has not created the operational outbox. It never
+initializes that source state. A failed launcher before its first receipt remains
+an actionable worker failure.
+
 Exit 0 and fresh idle/pending state do not mean worker death. Exit 2 and pending
 state preserve the processing incident while observation remains available.
 Launch failure, signal death, stalled running receipts, overdue/unreadable state

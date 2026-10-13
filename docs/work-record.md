@@ -144,3 +144,15 @@ record. Temporary units were removed. No real pool, capture hook, paid request,
 production worker or existing receiver was changed. Published concrete HMK
 connection and complete-path handoff in docs/hmk-integration.md; actual selected
 production binding and full worker-path receiving receipts remain outstanding.
+
+HMK published its consolidated receiving handoff in issue1/comment6157385138:
+forward-only capture is activated, midnight UTC processing is authorized, and
+prepared finite units await Alerts observation before controlled invocation.
+Resolved CompAII's real profile/inbox references through the private map and
+verified the complete journal binding read-only. Its worker has not started and
+its outbox is not initialized. Added explicit first-observation/launch-failure
+handling without mutating that journal, plus selected daily-cadence detection
+using invocation start rather than fresh status updates. Four targeted tests
+passed: finite result handling, first-launch/missed-run policy, actual HTTP
+unobserved projection with byte-identical source journal, and projection/recovery
+and independent service faults. HTTP contract and consumer enums are unchanged.

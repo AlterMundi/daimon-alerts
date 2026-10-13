@@ -59,6 +59,21 @@ an active timer does not certify the last worker invocation. Select freshness
 for the actual authorized cadence, including expected maximum runtime and grace.
 The observer never starts the worker or retries a request.
 
+An absent first worker receipt is explicitly unobserved, including a valid bound
+journal whose operational outbox has not yet been initialized. The observer never
+creates either HMK artifact. The existing v1 observation-unreadable projection
+has a specific not-started/unobserved summary, nullable source time, and private
+observer status `observation_kind: "unobserved"`. A failed loaded service before
+the first receipt reports worker_stopped with a launch-failure summary instead.
+Malformed bindings/journals remain unreadable; their errors are never projected.
+
+For an authorized daily calendar, select `worker_daily_utc: "00:00"` and a positive
+`worker_cadence_grace_seconds` (at most 86400). After that grace window, a worker
+receipt whose `started_ns` predates the expected invocation reports stale with a
+missed-invocation summary. Receipt updates alone cannot hide a missing run.
+These cadence fields join the immutable observer binding. This selects observation
+policy only; it installs no HMK timer and initiates no recovery or paid request.
+
 Default behavior remains continuous user-service observation. Changing mode or
 manager changes the retained observation binding: select a new private observer
 state directory and reconcile any prior observation incident explicitly. Preserve
