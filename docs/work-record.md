@@ -44,3 +44,21 @@ Release build and safe observer fault qualification pass. Added a16-request
 admission bound and5-second body deadline; rechecked affected HTTP/process tests.
 Python adapters use maintained HMK/Telecodex APIs; core runtime remains Rust.
 No global Stop has been requested or invoked by this implementation.
+
+Installed core and independent observer at741cfae. Exact executableSHA256:
+23564f536bf5c26babb5bd2e8f5b3afeec0f245c9cb8d01be4c5a960359d5120.
+Authenticated live HTTP confirmed one fictional HMK open incident and one pending
+intent. Source work remains preserved and unprocessed (0 chapters). Idle cgroup
+snapshot: core1490944bytes/8tasks/29msCPU; observer14376960bytes/1task/168msCPU.
+Both units have128MiB limits. The production HMK binding is not adopted.
+
+Resource service-daimon-alerts is registered in Shared Resources and the local
+receiving map, with private config/grant references only in the ignored overlay.
+Real Telegram/Sessions receipts and other-embodiment adoption remain unqualified.
+
+Concurrent Telecodex receiving writer replaced the draft Alerts API with
+Client/Sender/Receiver. Further receiver edits stopped, preserving both its work
+and the draft surrounding integration. The mismatch and exact core reference are
+recorded in #82. Earlier mocked-sender tests do not qualify the changed receiver.
+Source UI inspected in Chromium at390px; fictional alert state/readability passed,
+but this does not establish Telegram WebView or current receiving adapter behavior.
