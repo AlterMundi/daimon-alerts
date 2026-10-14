@@ -394,3 +394,17 @@ bounded visible input_timeout, with no capture/import. Eight installed-HMK proce
 checks and five observer/HTTP checks pass. This fixes future first-intent recovery;
 legacy unidentified attempts are not relabeled as captured or recovered. Native
 receiving adoption is a separate next operation; no paid model calls were used.
+
+PR4 is merged and8ee61d8 is adopted on CompAII, Eko and Oliva with service-user
+execution preflight, verified projection snapshots, exact native hook trust and
+fresh observer receipts. Core, worker, native listeners and source bindings stay
+unchanged. A fresh Oliva native turn produced complete Stop/SessionEnd attempts
+and reconstructable inbox snapshots. The live SessionEnd completion notification
+was not observed; durable terminal receipts reconciled the diagnostic timeout
+without replay. Model usage21,614tokens, including12,288cached input; USD unknown.
+No further semantic/consolidation comparison ran. Two legacy unidentified attempts
+remain open: no matching child receipt or interrupted atomic-write metadata was
+found, and the bounded older native-hook log window plus hook-item projection
+provided no identity. No timing-based attribution or source recovery is claimed.
+Current evidence:
+https://github.com/nicoechaniz/hermes-memory-kit/blob/main/research/agent-memory-2026-10-06/pilots/stock-hook-evidence/integrated-atomic-capture-adoption.json
