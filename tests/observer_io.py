@@ -62,6 +62,19 @@ class ObserverHTTP(unittest.TestCase):
             resolved=self.call('GET','/v1/incidents')[1]['items'][0]['projection']
             self.assertEqual(resolved['incident_id'],p['incident_id']);self.assertEqual(resolved['processing_state'],'resolved');self.assertEqual(resolved['revision'],2)
             self.assertEqual(len(self.pending()),2)
+            excluded_path,excluded=begin(capture,digest,1)
+            excluded.update(state='failed',reason='hook_timeout',source_ref='c'*64,event='Stop');finish(excluded_path,excluded)
+            observer.tick()
+            skipped_path,skipped=begin(capture,digest,1)
+            skipped.update(state='skipped',source_ref='c'*64,event='Stop',exclusion_reason='session_precedes_selected_boundary',updated_ns=time.time_ns());atomic(skipped_path,skipped)
+            resolve(capture,excluded['attempt_id'],skipped['attempt_id'],excluded=True);observer.tick()
+            excluded_id='capture-'+excluded['attempt_id']
+            result=next(x['projection'] for x in self.call('GET','/v1/incidents')[1]['items'] if x['projection']['incident_id']==excluded_id)
+            self.assertEqual(result['processing_state'],'resolved');self.assertFalse(result['work_preserved'])
+            self.assertEqual(result['revision'],2);self.assertIn('excluded',result['summary'])
+            self.assertEqual(len(self.pending()),4)
+            observer.db.close();observer.lock.close();observer=Observer(cfg);observer.tick()
+            self.assertEqual(len(self.pending()),4)
         finally:observer.db.close();observer.lock.close()
     def test_first_receipt_and_outbox_are_not_fabricated(self):
         self.process.terminate(); self.process.communicate()

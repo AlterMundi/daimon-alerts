@@ -354,3 +354,20 @@ and anonymous Alerts401. Native listeners stayed running. Backend/state unchange
 Alerts skill1.1.1 from840e8f5be6b44499efbaf8d63cdec27e51281377 (Skills PR66)
 updates that same guidance; managed installations qualified on all three bodies.
 Actual phone acceptance of this visual correction remains unobserved.
+
+2026-10-14 HMK receiving follow-up: actual native supervision exposed deadlines
+that were too short; HMK adopted bounded receiving margins and explicitly
+recovered the selected sources. Eleven retained failures instead concern sessions
+before the unchanged admission cutoff. Added explicit scope-exclusion resolution:
+a later matching skipped receipt must carry a verified closed exclusion reason.
+Ordinary recovery still requires complete capture; identity-less, mismatched and
+unverified/legacy skipped receipts cannot resolve a failure. Historical failure
+reason and matching exclusion receipt stay retained. The projection keeps
+work_preserved false and states exclusion, never successful intake. No source
+scope, HTTP schema, paid processing or core storage change is needed.
+
+Six installed-HMK subprocess checks and the five observer/HTTP checks qualify
+explicit exclusion, mismatched evidence, missing identity, non-import, same-ID
+revisioned resolution, durable reader restart and no duplicate delivery intent.
+Real receiving application and one unidentified historical Oliva attempt remain
+separate; the latter is deliberately not dismissed by this control.

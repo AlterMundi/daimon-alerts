@@ -19,6 +19,7 @@ import uuid
 
 SCHEMA='hmk.capture-attempt/v1'
 EVENTS={'Stop','SessionEnd','SessionStart','UserPromptSubmit','PostToolUse','PreCompact','PostCompact','Interrupt'}
+EXCLUSIONS={'unselected_working_directory','unselected_session_working_directory','session_precedes_selected_boundary'}
 REASONS={'hook_timeout','hook_uncertain','handler_failed','receipt_unavailable','invalid_payload','binding_unreadable','binding_changed',
          'transcript_unavailable','source_exceeds_capture_limit','source_changed_during_capture','source_header_incomplete',
          'session_scope_unverified','transcript_missing','capture_deferred'}
@@ -60,6 +61,12 @@ def attempt_record(path,expected_binding_hash):
         raise ValueError('invalid capture timestamp')
     if a.get('source_ref') is not None and (not isinstance(a['source_ref'],str) or not re.fullmatch('[a-f0-9]{64}',a['source_ref'])):
         raise ValueError('invalid capture source reference')
+    if a.get('exclusion_reason') is not None and a['exclusion_reason'] not in EXCLUSIONS:
+        raise ValueError('invalid capture exclusion')
+    if a.get('resolution_kind') not in (None,'source_captured','source_excluded'):
+        raise ValueError('invalid capture resolution')
+    if a.get('resolution_kind')=='source_excluded' and (a['state']!='resolved' or a.get('exclusion_reason') not in EXCLUSIONS):
+        raise ValueError('verified scope exclusion required')
     return a
 
 def directory(path):
@@ -113,6 +120,8 @@ def child(args):
     receipt=capture(binding,payload)
     safe=dict(capture_complete=receipt['capture_complete'],skipped=bool(receipt.get('skipped')),
               reason=receipt.get('error') if receipt.get('error') in REASONS else 'capture_deferred')
+    if safe['skipped'] and receipt.get('reason') in EXCLUSIONS:
+        safe['exclusion_reason']=receipt['reason']
     atomic(Path(args.child_receipt),safe)
     print(json.dumps({} if safe['capture_complete'] or safe['skipped'] else
         {'systemMessage':'HMK source capture deferred: '+safe['reason']}))
@@ -155,6 +164,8 @@ def invoke(args):
             attempt.update(state='failed',reason='receipt_unavailable');return finish(path,attempt)
         attempt.update(state='complete' if receipt['capture_complete'] else 'skipped' if receipt['skipped'] else 'failed',
             reason=None if receipt['capture_complete'] or receipt['skipped'] else receipt['reason'])
+        if attempt['state']=='skipped' and receipt.get('exclusion_reason') in EXCLUSIONS:
+            attempt['exclusion_reason']=receipt['exclusion_reason']
         return finish(path,attempt,output)
     finally:
         receipt_path.unlink(missing_ok=True)
@@ -180,36 +191,41 @@ def safe_projection(root,expected_binding_hash):
         reason=a['reason'] if a['state']!='started' else 'hook_uncertain'
         if reason not in REASONS|{'hook_uncertain'}:raise ValueError('unsupported capture reason')
         resolved=a['state']=='resolved'
+        excluded=resolved and a.get('resolution_kind')=='source_excluded'
         items.append(dict(incident_id='capture-'+a['attempt_id'],operation_id='capture-'+a['attempt_id'],phase='capture',
             severity='info' if resolved else 'error',problem_code='timeout' if reason=='hook_timeout' else
                 'dispatch_unresolved' if reason=='hook_uncertain' else 'observation_unreadable',
-            summary='Source capture restored after explicit recovery.' if resolved else 'Source capture not confirmed: '+reason.replace('_',' ')+'.',
-            action='Inspect the native capture hook and retained attempt; restore source capture explicitly. Do not assume the source was preserved.',
+            summary='Source excluded by the unchanged capture binding; no source bytes admitted.' if excluded else 'Source capture restored after explicit recovery.' if resolved else 'Source capture not confirmed: '+reason.replace('_',' ')+'.',
+            action='Preserve the verified exclusion evidence; no source intake or paid retry is required.' if excluded else 'Inspect the native capture hook and retained attempt; restore source capture explicitly. Do not assume the source was preserved.',
             source_at=a['started_ns']//1_000_000_000,updated_at=(a['deadline_ns'] if a['state']=='started' else a['updated_ns'])//1_000_000_000,
-            processing_state='resolved' if resolved else 'open',work_preserved=resolved))
+            processing_state='resolved' if resolved else 'open',work_preserved=resolved and not excluded))
     return dict(items=items)
 
-def resolve(root,attempt_id,recovery_id):
+def resolve(root,attempt_id,recovery_id,*,excluded=False):
     root=directory(root)
     if not all(re.fullmatch('[a-f0-9]{32}',x) for x in (attempt_id,recovery_id)):raise ValueError('retained attempt required')
     with open(root/'capture.lock','a+b') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         path=root/('attempt-'+attempt_id+'.json');owner=read(root/'owner.json')
         old=attempt_record(path,owner['binding_sha256']);recovery=attempt_record(root/('attempt-'+recovery_id+'.json'),owner['binding_sha256'])
-        if old['state']=='resolved' and old.get('recovery_attempt_id')==recovery_id:return
-        if (old['state'] not in ('failed','started') or recovery['state']!='complete' or
+        kind='source_excluded' if excluded else 'source_captured'
+        if old['state']=='resolved' and old.get('recovery_attempt_id')==recovery_id and old.get('resolution_kind','source_captured')==kind:return
+        valid_recovery=(recovery['state']=='skipped' and recovery.get('exclusion_reason') in EXCLUSIONS) if excluded else recovery['state']=='complete'
+        if (old['state'] not in ('failed','started') or not valid_recovery or
                 not old['source_ref'] or old['source_ref']!=recovery['source_ref'] or old['event']!=recovery['event'] or
                 old['binding_sha256']!=recovery['binding_sha256'] or recovery['started_ns']<=old['started_ns'] or
                 (old['state']=='started' and recovery['started_ns']<=old['deadline_ns'])):
             raise ValueError('confirmed matching source recovery required')
         if old['state']=='started':old['reason']='hook_uncertain'
-        old.update(state='resolved',updated_ns=time.time_ns(),recovery_attempt_id=recovery_id);atomic(path,old)
+        old.update(state='resolved',updated_ns=time.time_ns(),recovery_attempt_id=recovery_id,resolution_kind=kind)
+        if excluded:old['exclusion_reason']=recovery['exclusion_reason']
+        atomic(path,old)
 
 def main():
     os.umask(0o077);p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--child',action='store_true');p.add_argument('--binding');p.add_argument('--handler-source');p.add_argument('--child-receipt')
     p.add_argument('--state-dir');p.add_argument('--binding-sha256');p.add_argument('--timeout-seconds',type=float,default=1.5)
-    p.add_argument('--project',action='store_true');p.add_argument('--resolve-attempt');p.add_argument('--recovery-attempt')
+    p.add_argument('--project',action='store_true');p.add_argument('--resolve-attempt');p.add_argument('--exclude-attempt');p.add_argument('--recovery-attempt')
     p.add_argument('--initialize',action='store_true')
     args=p.parse_args()
     try:
@@ -219,12 +235,13 @@ def main():
             print(json.dumps({'supervision_initialized':True,'capture_invoked':False}));return 0
         if args.project:
             print(json.dumps(safe_projection(args.state_dir,args.binding_sha256)));return 0
-        if args.resolve_attempt or args.recovery_attempt:
-            resolve(args.state_dir,args.resolve_attempt,args.recovery_attempt)
-            print(json.dumps({'capture_gap_resolved':True,'processing_invoked':False}));return 0
+        if args.resolve_attempt or args.exclude_attempt or args.recovery_attempt:
+            if bool(args.resolve_attempt)==bool(args.exclude_attempt):raise ValueError('select one resolution kind')
+            resolve(args.state_dir,args.resolve_attempt or args.exclude_attempt,args.recovery_attempt,excluded=bool(args.exclude_attempt))
+            print(json.dumps({'capture_gap_resolved':True,'source_excluded':bool(args.exclude_attempt),'processing_invoked':False}));return 0
         return invoke(args)
     except Exception:
         print(json.dumps({'systemMessage':'HMK capture supervision unavailable; source preservation is unconfirmed.'}))
-        return 1 if args.child or args.initialize or args.project or args.resolve_attempt or args.recovery_attempt else 0
+        return 1 if args.child or args.initialize or args.project or args.resolve_attempt or args.exclude_attempt or args.recovery_attempt else 0
 
 if __name__=='__main__':raise SystemExit(main())

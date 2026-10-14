@@ -108,8 +108,11 @@ records only the selected binding; it does not certify capture or preserved work
 
 Supply `--binding`, exact file `--binding-sha256`, pinned `--handler-source`,
 private `--state-dir` and `--timeout-seconds`. Timeout must fit the native hook's
-deadline including wrapper startup; for the existing three-second SessionEnd
-hook use a1.5-second child bound. Native kill leaves a durable started intent;
+deadline including wrapper startup and durable writes. Qualify the actual receiving
+budget: a 1.5-second child bound failed on the real containers. The qualified
+2026-10-14 settings are Oliva child5/outer10 seconds for both events, Eko
+Stop15/30 and SessionEnd5/10; CompAII's existing setting remained sufficient.
+These are receiving observations, not a universal default. Native kill leaves a durable started intent;
 after its persisted deadline the independent observer reports uncertainty.
 Failed/unknown attempts are retained. The128-attempt ledger prunes terminal
 success/skip entries; resolved failures remain at least24hours. Admission cannot
@@ -137,6 +140,24 @@ confirmed matching recovery via `--resolve-attempt ID --recovery-attempt ID
 --state-dir ...`; the helper requires the same source/event/binding and later
 successful capture. This records resolution without invoking processing. It
 does not authorize paid retries, source-scope changes or native goal resumption.
+
+A verified scope exclusion is different from recovered source bytes. Reinvoke
+the selected capture handler under the unchanged binding; a matching later
+`skipped` attempt must retain a closed exclusion reason. Then use
+`--exclude-attempt ID --recovery-attempt ID --state-dir ...` explicitly. The same
+source, event and binding and later observation are required. Legacy skipped
+receipts without an exclusion reason are insufficient. The resolved failure
+retains its original reason, recovery reference and `source_excluded` resolution
+kind. Its projection states that the source was excluded and keeps
+`work_preserved: false`; no inbox, canonical record, paid dispatch or native goal
+is created. Deploy the updated projection reader before issuing exclusions so
+an older observer cannot mistake them for captured bytes. Runtime rollback must
+retain a projection reader capable of rendering existing resolution kinds.
+
+Attempts killed before source/event identity was recorded cannot be matched to
+later successful or skipped operations. Keep those incidents open unless
+independent operation evidence establishes their identity; this command supplies
+no generic dismissal or timing-based guess.
 
 Default behavior remains continuous user-service observation. Changing mode or
 manager changes the retained observation binding: select a new private observer
