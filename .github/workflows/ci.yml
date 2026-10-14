@@ -29,3 +29,11 @@ jobs:
       - run: python tests/observer_io.py
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-source
+      - uses: actions/checkout@v4
+        with:
+          repository: nicoechaniz/hermes-memory-kit
+          ref: 103a5a0f5b90fc0d794a9909c2db00f0ce282de6
+          path: .hmk-runtime
+      - run: python tests/worker_qualification_io.py
+        env:
+          ALERTS_TEST_HMK_SOURCE: .hmk-runtime
