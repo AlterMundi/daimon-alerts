@@ -74,6 +74,52 @@ missed-invocation summary. Receipt updates alone cannot hide a missing run.
 These cadence fields join the immutable observer binding. This selects observation
 policy only; it installs no HMK timer and initiates no recovery or paid request.
 
+## Capture before the HMK journal
+
+`scripts/capture_supervisor.py` wraps the existing selected HMK capture API. Use
+it only for already-authorized hook events and source binding, preserving their
+admission boundary. It writes a separate private intent before starting a bounded
+synchronous child; it imports no model or canonical-memory writer. Only the
+original capture handler reads the selected transcript and writes its existing
+inbox. Payloads, transcript paths, source text, credentials and exception messages
+never enter the supervision ledger or public projections.
+
+Initialize the private ledger with `--initialize --state-dir ...
+--binding-sha256 ...` before installing the selected wrapper. Initialization
+records only the selected binding; it does not certify capture or preserved work.
+
+Supply `--binding`, exact file `--binding-sha256`, pinned `--handler-source`,
+private `--state-dir` and `--timeout-seconds`. Timeout must fit the native hook's
+deadline including wrapper startup; for the existing three-second SessionEnd
+hook use a1.5-second child bound. Native kill leaves a durable started intent;
+after its persisted deadline the independent observer reports uncertainty.
+Failed/unknown attempts are retained. The128-attempt ledger prunes terminal
+success/skip entries; resolved failures remain at least24hours. Admission cannot
+silently discard unresolved gaps. Missing/unreadable supervision remains explicit.
+
+Configure the observer's optional `capture_state_dir` and
+`capture_binding_sha256` for read-only gap projection. These join its immutable
+binding; adopt a new private observer state and preserve the existing projection
+revisions/accepted receipts when explicitly adding this route. The HTTP schema
+is unchanged: capture incidents use closed safe codes, stable attempt IDs and
+`work_preserved: false` until explicit evidence-based source recovery.
+
+Stop only the selected observer, retain its private config, and prepare a new
+config differing only in `state_dir` and the two capture fields. Run
+`observer.py --config NEW --adopt-capture-from PRIOR` before selecting the new
+config/release. This helper refuses a live observer lock or any other binding
+change, verifies a SQLite backup, preserves revisions and source incident state,
+and leaves the original state available for software rollback. Restart the
+observer after adoption; neither migration nor rollback dispatches producer work.
+
+`capture_supervisor.py --project --state-dir ... --binding-sha256 ...` reads only
+the supervision ledger. A later successful hook does not automatically resolve
+older gaps. After explicit source recapture, select the retained failure and
+confirmed matching recovery via `--resolve-attempt ID --recovery-attempt ID
+--state-dir ...`; the helper requires the same source/event/binding and later
+successful capture. This records resolution without invoking processing. It
+does not authorize paid retries, source-scope changes or native goal resumption.
+
 Default behavior remains continuous user-service observation. Changing mode or
 manager changes the retained observation binding: select a new private observer
 state directory and reconcile any prior observation incident explicitly. Preserve

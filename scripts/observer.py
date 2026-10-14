@@ -57,7 +57,10 @@ class Observer:
         self.config=config; self.client=Client(config['base_url'],config['token_file'])
         self.state=Path(config['state_dir']); self.state.mkdir(mode=0o700,parents=True,exist_ok=True)
         if self.state.is_symlink() or self.state.stat().st_mode&0o077: raise ValueError('private observer state required')
-        self.lock=open(self.state/'observer.lock','a+b'); fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        self.lock=open(self.state/'observer.lock','a+b')
+        try:fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BaseException:
+            self.lock.close();raise
         self.db=sqlite3.connect(self.state/'projection.sqlite'); self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('CREATE TABLE IF NOT EXISTS projections(id TEXT PRIMARY KEY,revision INTEGER,content TEXT,accepted INTEGER)')
         self.db.execute('CREATE TABLE IF NOT EXISTS binding(value TEXT PRIMARY KEY)')
@@ -84,6 +87,11 @@ class Observer:
         if daily is not None:
             selected['worker_daily_utc']=daily
             selected['worker_cadence_grace_seconds']=config['worker_cadence_grace_seconds']
+        if config.get('capture_state_dir') is not None:
+            if not re.fullmatch('[a-f0-9]{64}',config.get('capture_binding_sha256','')):
+                raise ValueError('selected capture binding digest required')
+            selected['capture_state_dir']=config['capture_state_dir']
+            selected['capture_binding_sha256']=config['capture_binding_sha256']
         binding=json.dumps(selected,sort_keys=True)
         prior=self.db.execute('SELECT value FROM binding').fetchone()
         if prior and prior[0]!=binding: raise ValueError('observer binding changed; explicit reconciliation required')
@@ -183,6 +191,7 @@ class Observer:
         detail=getattr(self,'observation_kind',None)
         summary={'unobserved':'HMK worker not started or unobserved: no first worker receipt.',
                  'launch_failure':'HMK worker launch failed before publishing a receipt.',
+                 'capture_unreadable':'HMK capture supervision cannot be read; source coverage is unconfirmed.',
                  'missed_invocation':'HMK worker missed its selected daily invocation.'}.get(detail,
                  'Worker observation requires attention: '+code.replace('_',' ')+'.')
         if prior and prior['processing_state']=='open' and prior['problem_code']==code:
@@ -221,18 +230,74 @@ class Observer:
         try:
             if service=='available':
                 self.observation_incident(code,source)
+                if self.config.get('capture_state_dir') is not None:
+                    from capture_supervisor import safe_projection
+                    for record in safe_projection(self.config['capture_state_dir'],self.config['capture_binding_sha256'])['items']:
+                        self.project(record)
                 self.client.call('PUT','/v1/observers/'+self.config['observer_id'],dict(receiving_scope=self.config['receiving_scope'],source_at=source,source_state=code))
+        except (OSError,ValueError):
+            code='observation_unreadable';self.observation_kind='capture_unreadable'
+            try:
+                self.observation_incident(code,source)
+                self.client.call('PUT','/v1/observers/'+self.config['observer_id'],dict(receiving_scope=self.config['receiving_scope'],source_at=source,source_state=code))
+            except Unavailable:service='unavailable'
         except Unavailable: service='unavailable'
         result=dict(schema='daimon-alerts.observer/v1',observed_at=int(time.time()),source_state=code,source_at=source,service_state=service,accepted_projections=accepted)
         if self.observation_kind is not None: result['observation_kind']=self.observation_kind
         atomic(self.state/'status.json',result)
         return result
 
+def adopt_capture(config, prior_config):
+    """Add only capture observation, retaining accepted revisions in a new state.
+
+    The source observer must be stopped. Its lock and original state survive;
+    failed adoption removes only the newly created destination.
+    """
+    import shutil
+    from capture_supervisor import safe_projection
+    keys={'state_dir','capture_state_dir','capture_binding_sha256'}
+    if (any(k in prior_config for k in keys-{'state_dir'}) or
+            {k:v for k,v in config.items() if k not in keys} !=
+            {k:v for k,v in prior_config.items() if k not in keys}):
+        raise ValueError('capture-only compatible successor required')
+    safe_projection(config['capture_state_dir'],config['capture_binding_sha256'])
+    source=Path(prior_config['state_dir'])
+    if not (source/'projection.sqlite').is_file():raise ValueError('retained observer state required')
+    destination=Path(config['state_dir']).absolute()
+    if destination.exists() or any(p.is_symlink() for p in destination.parents):
+        raise ValueError('new private observer state required')
+    old=Observer(prior_config)
+    try:
+        destination.mkdir(mode=0o700)
+        try:
+            target=sqlite3.connect(destination/'projection.sqlite')
+            try:
+                old.db.backup(target)
+                if target.execute('PRAGMA quick_check').fetchone()!=('ok',):raise ValueError('verified observer snapshot required')
+                binding=json.loads(target.execute('SELECT value FROM binding').fetchone()[0])
+                binding.update(capture_state_dir=config['capture_state_dir'],capture_binding_sha256=config['capture_binding_sha256'])
+                with target:target.execute('UPDATE binding SET value=?',(json.dumps(binding,sort_keys=True),))
+                count=target.execute('SELECT count(*) FROM projections').fetchone()[0]
+            finally:target.close()
+            for name in ('source-incident.json','status.json','producer-status.json'):
+                if (source/name).exists():atomic(destination/name,json.loads(private_text(source/name)))
+            new=Observer(config)
+            new.db.close();new.lock.close()
+        except BaseException:
+            shutil.rmtree(destination);raise
+    finally:
+        old.db.close();old.lock.close()
+    return dict(capture_observation_adopted=True,retained_projections=count,processing_invoked=False)
+
 def main():
     os.umask(0o077)
-    parser=argparse.ArgumentParser(); parser.add_argument('--config',required=True); parser.add_argument('--once',action='store_true'); args=parser.parse_args()
+    parser=argparse.ArgumentParser(); parser.add_argument('--config',required=True); parser.add_argument('--once',action='store_true')
+    parser.add_argument('--adopt-capture-from');args=parser.parse_args()
     try:
-        config=json.loads(private_text(args.config)); observer=Observer(config)
+        config=json.loads(private_text(args.config))
+        if args.adopt_capture_from:
+            print(json.dumps(adopt_capture(config,json.loads(private_text(args.adopt_capture_from)))));return
+        observer=Observer(config)
         while True:
             result=observer.tick()
             if args.once: print(json.dumps(result)); return

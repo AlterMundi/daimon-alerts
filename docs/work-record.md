@@ -253,3 +253,23 @@ and Oliva native skill probes force-reloaded and listed alerts with0 errors,
 used a verified incremental Git bundle via the existing local Incus route, not
 another body's credentials. Other skill files and body bindings stayed unchanged.
 Skill installation/discovery does not qualify Eko/Oliva service access or delivery.
+
+The human directed us to complete executable work ourselves, without delegating
+receiving adoption to Eko/Oliva. No Tribe message or task was sent. Prepared
+Telecodex Sessions-compatible candidatecda60452a415b4234c84e29b895cc2e26a93516a:
+Rust1.95.0, no-default-features;203 tests passed,1 ignored. Release binary
+SHA25633cd3c209bff268b77ee6f148e90c806ae6649eb418f9a15cbebe4f3fa4aed6b;
+source archivee50909463c51407768d27c4c2f534479978311aef04d781659d2f43c058d4f64.
+Real ingress and questions subprocess journeys passed against this binary.
+This candidate has not replaced either receiving body's listener.
+
+Implemented separate pre-inbox capture supervision around the existing pinned
+HMK capture API, without modifying concurrent HMK code or paid processing.
+Four real subprocess tests against installedHMK103a passed: missing transcript
+and explicit recapture; initialization without fabricated capture; timeout;
+native process-group death followed by explicit matching recovery. Source and
+payload markers do not enter safe telemetry. Five observer/HTTP tests passed,
+including same-ID resolution, no repeated delivery intent, and capture-only
+SQLite migration preserving accepted revisions and refusing an active observer.
+Operator projection/recovery failures exit nonzero; native hook failures retain
+safe warnings. Installation and real receiving qualification remain separate.

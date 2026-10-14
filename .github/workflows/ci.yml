@@ -37,3 +37,6 @@ jobs:
       - run: python tests/worker_qualification_io.py
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-runtime
+      - run: python tests/capture_supervision_io.py
+        env:
+          ALERTS_TEST_HMK_SOURCE: .hmk-runtime
