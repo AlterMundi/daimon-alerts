@@ -198,3 +198,32 @@ the installed Sessions backend. Source is preserved,0chapters,1 failed controlle
 dispatch and0 successful ones; repeated failure invocation reuses the receipt.
 Phone observation/acknowledgment and receiving-path recovery/resolution remain
 pending; an earlier stale fictional-observer incident remains separately visible.
+
+Human phone acceptance: Nicolás reported the open selection/payment_required
+notice with delivered state. Explicit receipt-bound controlled recovery then
+completed1 chapter, preserved source and retained the failed attempt. Replay was
+idle with0 new transport/embedding calls. Same incident resolved atrevision2;
+real Telegram accepted resolution`telegram-11240` after open`telegram-11234`.
+Installed Sessions reads that resolved projection and both receipts. A later
+read observes1 authenticated acknowledgment following the human's stated click;
+no producer recovery is inferred from that acknowledgment. This is a controlled
+fictional transport failure through the real finite-worker APIs and supervised
+receiving route, separate from the successful real bound-journal invocation.
+
+Human requested clear attention and independent processing/acknowledgment states.
+Telecodex PR91 merged at17dad033; its dashboard CI and UI regressions passed.
+Installed UIcda6045 adds amber warning/unacknowledged count, explicit Open/Resolved
+and Acknowledged/Unacknowledged badges, and collapsed resolved history that keeps
+its expansion across refresh. Existing backend/helper bytes and configured grants
+are retained. SQLite snapshots verified before optional Sessions sidecar restart;
+native listener PID stayed unchanged. First package missed its existing activity
+helper and was rolled back; actual traceback identified the missing scripts
+module, helper was included, and package import/health/served-byte checks passed.
+Final health200, anonymous Alerts401; phone rendering of the new layout remains
+to be observed. Retention remains core-owned, with no browser deletion operation.
+
+CompAII's already-authorized midnight UTC schedule is now enabled after its
+worker/observer/receiving qualification; next invocation is2026-10-15 00:00 UTC.
+No explicit paid retry was scheduled or authorized by an alert. Eko/Oliva's
+receiving connections remain unqualified, and pre-inbox hook-failure coverage
+remains an explicit gap. Do not mark the overall multi-receiver task complete.
