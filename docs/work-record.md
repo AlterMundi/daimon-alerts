@@ -177,3 +177,24 @@ The complete failure/recovery/resolution loop remains pending. Eko/Oliva's actua
 observers/grants/delivery routes remain unconnected here; do not inherit this
 CompAII receipt. A hook failure before any inbox write has no configured durable
 coverage signal in this integration and remains an explicit gap.
+
+Human assigned integration and testing to this session, including receiving
+worker operation. Installed CompAII's prepared finite service/timer with timer
+disabled; verified live-memory and capture snapshots preceded first invocation.
+Real installed HMK103a5a0 completed five steps with capture/organization/index
+idle and earlier source revisions preserved. The production observer correctly
+resolved its first-observation incident; Telegram accepted resolution11211.
+
+Controlled failure uses the same installed finite runtime/model-receipt and
+explicit-retry APIs with an isolated fictional corpus and deterministic provider
+transport/embedding doubles. It is not an actual provider-credit outage or paid
+dispatch. The reusable driver/test at4fc4403 retains a failed402 receipt and
+requires the existing receipt-bound retry before completion. Failure/repeat,
+explicit recovery, retained failure+success chain, one chapter and replay with no
+new dispatch/embedding all passed in a separate temporary test destination.
+Supervised receiving qualification is now held open for human phone inspection:
+one selection/payment_required incident accepted as`telegram-11234`, visible in
+the installed Sessions backend. Source is preserved,0chapters,1 failed controlled
+dispatch and0 successful ones; repeated failure invocation reuses the receipt.
+Phone observation/acknowledgment and receiving-path recovery/resolution remain
+pending; an earlier stale fictional-observer incident remains separately visible.
