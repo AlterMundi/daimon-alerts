@@ -156,3 +156,24 @@ using invocation start rather than fresh status updates. Four targeted tests
 passed: finite result handling, first-launch/missed-run policy, actual HTTP
 unobserved projection with byte-identical source journal, and projection/recovery
 and independent service faults. HTTP contract and consumer enums are unchanged.
+
+CompAII's real bound-journal observer is now installed independently atcf34d2e,
+using HMK103a5a0 and a new own producer/observer credential restricted to its
+receiving scope. Preserved the core's existing actors/routes and receipts; online
+verified backup preceded the additive grant and Alerts-only restart. Neither
+production Telegram listener nor HMK worker/timer was started or restarted.
+Observer active,15.5MiB/1task,128MiB bound; real source journal remained
+byte-identical. Source status is explicitly unobserved with null source time:
+no first worker receipt is invented. Supervised Telecodex1983a929 now has delivery
+enabled by its operator and accepted this observation notice as`telegram-11066`.
+Its installed Sessions backend reads the same real-source incident and delivered
+receipt; phone reading/acknowledgment remain unobserved. No provider failure,
+processing success or recovery is inferred from this initial coverage notice.
+
+Private readiness receipt resolves through the existing HMK capability-map route
+as`alerts_connection_ready`. CompAII is ready for HMK to install its prepared
+finite service with timer disabled and perform the selected controlled invocation.
+The complete failure/recovery/resolution loop remains pending. Eko/Oliva's actual
+observers/grants/delivery routes remain unconnected here; do not inherit this
+CompAII receipt. A hook failure before any inbox write has no configured durable
+coverage signal in this integration and remains an explicit gap.
