@@ -115,6 +115,14 @@ supervision must detect connection failure. Production observation uses the safe
 HMK boundary and never dispatches source work. Observation ingress is operator
 only and documented separately; it is not a browser operation.
 
+Operator lifecycle extension: `POST /v1/observers/{observer_id}/retire` accepts
+`ObserverRetirementInput` and returns the unchanged `Status`. It requires the
+existing `observe`/`status` grants and exact observer/scope associations. Explicit
+idempotent retirement removes only health registration; it does not recover work,
+delete incidents or erase acknowledgments/delivery receipts. The observing
+supervisor must be stopped first. See the operator runbook for the corresponding
+owned observation-incident resolution and retained-state reconciliation.
+
 SQLite transactions, full synchronous commits and migrations preserve acceptance,
 acknowledgment and uncertain attempts across process death. Backups use SQLite's
 online backup API and integrity verification. Retention never purges open incidents

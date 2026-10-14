@@ -121,6 +121,9 @@ impl Store {
             ("PUT", ["v1", "observers", observer]) => {
                 self.observe(&tx, actor, observer, decode(body)?)
             }
+            ("POST", ["v1", "observers", observer, "retire"]) => {
+                self.retire_observer(&tx, actor, observer, decode(body)?)
+            }
             _ => Err(Error(404, "not_found")),
         }?;
         tx.commit()?;
@@ -523,6 +526,39 @@ impl Store {
             return Err(Error(503, "capacity_exceeded"));
         }
         tx.execute("INSERT INTO observers VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,source_at=excluded.source_at,source_state=excluded.source_state",params![observer,value.receiving_scope,now(),value.source_at,value.source_state])?;
+        self.status(tx, actor)
+    }
+    fn retire_observer(
+        &self,
+        tx: &Transaction<'_>,
+        actor: &Actor,
+        observer: &str,
+        value: ObserverRetirementInput,
+    ) -> Result<(u16, Value)> {
+        require(
+            actor.grant("observe")
+                && actor.grant("status")
+                && actor.producer(observer)
+                && actor.scope(&value.receiving_scope),
+            "forbidden",
+        )?;
+        if !id(&value.receiving_scope) {
+            return Err(Error(400, "invalid_request"));
+        }
+        let prior: Option<String> = tx
+            .query_row("SELECT scope FROM observers WHERE id=?", [observer], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if prior
+            .as_ref()
+            .is_some_and(|scope| scope != &value.receiving_scope)
+        {
+            return Err(Error(409, "provenance_conflict"));
+        }
+        // Explicit retirement removes only liveness registration. Accepted
+        // incidents, work, acknowledgments and delivery receipts stay intact.
+        tx.execute("DELETE FROM observers WHERE id=?", [observer])?;
         self.status(tx, actor)
     }
     pub fn backup(&self, destination: &Path) -> Result<()> {

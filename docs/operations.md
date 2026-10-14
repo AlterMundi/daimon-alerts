@@ -74,6 +74,24 @@ missed-invocation summary. Receipt updates alone cannot hide a missing run.
 These cadence fields join the immutable observer binding. This selects observation
 policy only; it installs no HMK timer and initiates no recovery or paid request.
 
+## Retire a completed observation fixture
+
+Stop and disable only its selected observation supervisor, then run
+`observer.py --config PRIVATE_CONFIG --retire`. The exclusive state lock refuses
+an active writer. The helper resolves only its own observation-liveness incident
+with an explicit retirement summary, preserves source work and all delivery/ack
+receipts, and removes its health registration. It never declares source recovery.
+Retired state refuses ordinary ticks until explicit reconciliation; restart does
+not silently reactivate a completed fixture.
+
+The operator-only `POST /v1/observers/{observer_id}/retire` takes the closed
+`ObserverRetirementInput` (`receiving_scope`) and returns the existing `Status`.
+It requires `observe`, `status`, exact observer producer association and scope.
+Repeated retirement is idempotent; incidents and delivery intents remain intact.
+If no active observers remain, status is `unobserved`, not certified healthy.
+This additive v1 route needs no database-format migration. Older cores refuse it;
+retain their accepted state and install the qualified compatible successor first.
+
 ## Capture before the HMK journal
 
 `scripts/capture_supervisor.py` wraps the existing selected HMK capture API. Use

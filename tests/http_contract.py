@@ -162,6 +162,29 @@ class Contract(unittest.TestCase):
         self.assertEqual(self.call('GET','/v1/status')[1]['state'],'degraded')
         self.assertEqual(self.call('PUT','/v1/observers/fictional-observer',dict(body,source_state='observation_unreadable'),actor='producer')[1]['state'],'degraded')
 
+    def test_explicit_observer_retirement_preserves_pending_work_and_uncertain_delivery(self):
+        self.process.terminate();self.process.communicate()
+        actor=self.config['actors'][0];actor['grants'].append('observe');actor['producers']+=['fictional-observer','retained-observer']
+        self.path.write_text(json.dumps(self.config));self.start();self.publish()
+        delivery=self.pending()[0]['delivery_id'];claim=f'/v1/deliveries/{delivery}/claim'
+        self.assertTrue(self.call('POST',claim,{'request_id':'uncertain-before-retirement'})[1]['dispatch_allowed'])
+        body=dict(receiving_scope='fictional-human',source_at=int(time.time()),source_state='healthy')
+        for id in ('fictional-observer','retained-observer'):
+            self.assertEqual(self.call('PUT','/v1/observers/'+id,body,actor='producer')[0],200)
+        route='/v1/observers/fictional-observer/retire';value={'receiving_scope':'fictional-human'}
+        self.assertEqual(self.call('POST',route,value)[0],403)
+        self.assertEqual(self.call('POST',route,{'receiving_scope':'foreign'},actor='producer')[0],403)
+        self.assertEqual(self.call('POST','/v1/observers/foreign-observer/retire',value,actor='producer')[0],403)
+        self.assertEqual(self.call('POST',route,dict(value,raw_error='private'),actor='producer')[0],400)
+        for _ in range(2):
+            result=self.call('POST',route,value,actor='producer');self.assertEqual(result[0],200)
+            self.assertEqual([o['observer_id'] for o in result[1]['observers']],['retained-observer'])
+        self.process.terminate();self.process.communicate();self.start()
+        self.assertEqual([o['observer_id'] for o in self.call('GET','/v1/status')[1]['observers']],['retained-observer'])
+        self.assertEqual(self.call('GET',self.incident)[1]['projection']['processing_state'],'open')
+        self.assertEqual(self.call('GET',self.incident)[1]['deliveries'][0]['state'],'uncertain')
+        self.assertFalse(self.call('POST',claim,{'request_id':'uncertain-before-retirement'})[1]['dispatch_allowed'])
+
 if __name__=='__main__':
     subprocess.run(['cargo','build','--locked'],cwd=ROOT,check=True)
     unittest.main(verbosity=2)

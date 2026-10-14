@@ -219,6 +219,11 @@ pub struct ObservationInput {
     pub source_at: Option<i64>,
     pub source_state: String,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserverRetirementInput {
+    pub receiving_scope: String,
+}
 #[derive(Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Page {

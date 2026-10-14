@@ -206,7 +206,28 @@ class Observer:
         now=int(time.time())
         value=dict(incident_id='observation-'+uuid.uuid4().hex,operation_id=self.config['observer_id'],phase='observation',severity='error',problem_code=code,summary=summary,action=ACTIONS[code],source_at=now,updated_at=now,processing_state='open',work_preserved=True)
         atomic(path,value); self.project(value)
+    def retire(self):
+        """Explicitly retire a stopped route; never change producer work."""
+        path=self.state/'source-incident.json'
+        if path.exists():
+            value=json.loads(private_text(path))
+            if value.get('phase')!='observation' or value.get('operation_id')!=self.config['observer_id']:
+                raise ValueError('owned observation incident required')
+            if value['processing_state']=='open':
+                value.update(processing_state='resolved',updated_at=int(time.time()),severity='info',
+                    summary='Observation route explicitly retired by its operator.',
+                    action='Retained producer work and delivery receipts are unchanged; no source recovery is inferred.')
+                atomic(path,value)
+            self.project(value)
+        status=self.client.call('POST','/v1/observers/'+self.config['observer_id']+'/retire',
+            dict(receiving_scope=self.config['receiving_scope']))
+        if any(o['observer_id']==self.config['observer_id'] for o in status['observers']):raise Unavailable()
+        receipt=dict(observer_id=self.config['observer_id'],receiving_scope=self.config['receiving_scope'],
+            retired=True,processing_invoked=False)
+        atomic(self.state/'retirement.json',receipt)
+        return receipt
     def tick(self):
+        if (self.state/'retirement.json').exists():raise ValueError('retired observation needs explicit reconciliation')
         code,source=self.source_state(); accepted=0; service='available'
         try:
             cursor=0
@@ -292,12 +313,15 @@ def adopt_capture(config, prior_config):
 def main():
     os.umask(0o077)
     parser=argparse.ArgumentParser(); parser.add_argument('--config',required=True); parser.add_argument('--once',action='store_true')
-    parser.add_argument('--adopt-capture-from');args=parser.parse_args()
+    parser.add_argument('--adopt-capture-from');parser.add_argument('--retire',action='store_true');args=parser.parse_args()
     try:
         config=json.loads(private_text(args.config))
         if args.adopt_capture_from:
             print(json.dumps(adopt_capture(config,json.loads(private_text(args.adopt_capture_from)))));return
         observer=Observer(config)
+        if args.retire:
+            try:print(json.dumps(observer.retire()));return
+            finally:observer.db.close();observer.lock.close()
         while True:
             result=observer.tick()
             if args.once: print(json.dumps(result)); return

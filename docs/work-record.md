@@ -318,3 +318,18 @@ A new selected native source event through these wrappers has not been qualified
 real subprocess kill/timeout/explicit matching recapture and HTTP qualification
 remain separately recorded. Three-body Alerts skill1.1.0 stays current: its
 coverage guidance already requires a supported route or an explicit gap.
+
+Eko and Oliva's established receiving capability maps now register their own
+service instance and private binding, preserving unrelated resources. Own-binding
+discovery and authenticated status inspection passed. No CompAII private map or
+credential was copied, and native identity/owner instructions were not changed.
+
+Root service status exposed two completed fictional observers still running with
+stale sources. Implemented explicit own-scope observer retirement rather than
+renewing fake health or deleting source work. Additive POST retire uses existing
+observe/status grants and returns unchanged Status. Seven process/HTTP/SQLite
+contract cases passed, including retirement scope denial, idempotency, restart
+and retained uncertain dispatch/pending incident. Five observer cases passed:
+retirement resolves only its owned observation-liveness incident, preserves the
+source journal and refuses subsequent ticks. Fixture CLI, Rust format/clippy/test
+and schema generation passed. No database-format change is needed.

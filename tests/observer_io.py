@@ -85,6 +85,14 @@ class ObserverHTTP(unittest.TestCase):
             observer.tick(); self.assertEqual(len(self.pending()),1)
             self.assertEqual(inbox.path.read_bytes(),before)
             self.assertFalse(Path(config['worker_state_dir']).exists())
+            self.assertTrue(observer.retire()['retired']);observer.retire()
+            retired=self.call('GET','/v1/incidents')[1]['items'][0]['projection']
+            self.assertEqual(retired['incident_id'],incident['incident_id'])
+            self.assertEqual(retired['processing_state'],'resolved');self.assertIn('retired',retired['summary'])
+            self.assertEqual(len(self.pending()),2)
+            self.assertEqual(self.call('GET','/v1/status')[1]['state'],'unobserved')
+            with self.assertRaises(ValueError):observer.tick()
+            self.assertEqual(inbox.path.read_bytes(),before);self.assertFalse(Path(config['worker_state_dir']).exists())
         finally:
             observer.db.close(); observer.lock.close()
     def test_safe_source_and_observer_faults(self):

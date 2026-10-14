@@ -20,6 +20,7 @@ defs['Incident']=obj(dict(projection=ref('IncidentInput'),accepted_at=TIME,obser
 for name,item in [('IncidentPage','Incident'),('DeliveryPage','Delivery')]:
     defs[name]=obj(dict(items=array(item),next_cursor={'type':['string','null']}))
 defs['Observer']=obj(dict(observer_id=ID,receiving_scope=ID,observed_at=TIME,source_at={'anyOf':[TIME,{'type':'null'}]},source_state=enum('healthy','worker_stopped','worker_stalled','observation_stale','observation_unreadable'),freshness=enum('fresh','stale')))
+defs['ObserverRetirementInput']=obj(dict(receiving_scope=ID))
 defs['Status']=obj(dict(schema={'const':'daimon-alerts/v1'},service_time=TIME,state=enum('healthy','degraded','unobserved'),observers=array('Observer')))
 defs['Error']=obj(dict(schema={'const':'daimon-alerts/v1'},error=enum('unauthorized','forbidden','not_found','invalid_request','stale_revision','revision_conflict','provenance_conflict','resolved_incident','claim_conflict','receipt_conflict','capacity_exceeded','internal_error','unavailable','payload_too_large','unsupported_media_type')))
 schema={'$schema':'https://json-schema.org/draft/2020-12/schema','$id':'https://github.com/AlterMundi/daimon-alerts/schemas/daimon-alerts-v1.json','title':'Daimon Alerts v1','$defs':defs}
