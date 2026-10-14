@@ -371,3 +371,17 @@ explicit exclusion, mismatched evidence, missing identity, non-import, same-ID
 revisioned resolution, durable reader restart and no duplicate delivery intent.
 Real receiving application and one unidentified historical Oliva attempt remain
 separate; the latter is deliberately not dismissed by this control.
+
+PR2 is merged; e5cb43c supervisor/projection reader adopted on Eko and Oliva after
+verified projection snapshots and preserved configuration. FullCI38614597871
+passed. Native hook hashes are trusted; core, worker and native listeners remain
+unchanged. Corrected the new executable directory's inherited restrictive umask
+before applying exclusions, then verified service-user execution and fresh
+observer health. One Eko and twelve Oliva attempts are explicitly resolved as
+excluded, with no excluded-source inbox observations or model calls. Original
+failure/recovery evidence remains. Eko has0open incidents; Oliva retains2attempts
+without source/event identity. Eleven Oliva resolution deliveries are confirmed,
+one is uncertain and was not retried. Current receipt and exact continuation:
+https://github.com/nicoechaniz/hermes-memory-kit/blob/main/research/agent-memory-2026-10-06/pilots/stock-hook-evidence/integrated-capture-exclusion-adoption.json
+Rollback must retain a reader that understands source_excluded resolutions and
+all later journals/projections; an old reader would falsely claim captured bytes.
