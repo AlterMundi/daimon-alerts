@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import stat
 import subprocess
 import sys
@@ -20,7 +21,7 @@ import uuid
 SCHEMA='hmk.capture-attempt/v1'
 EVENTS={'Stop','SessionEnd','SessionStart','UserPromptSubmit','PostToolUse','PreCompact','PostCompact','Interrupt'}
 EXCLUSIONS={'unselected_working_directory','unselected_session_working_directory','session_precedes_selected_boundary'}
-REASONS={'hook_timeout','hook_uncertain','handler_failed','receipt_unavailable','invalid_payload','binding_unreadable','binding_changed',
+REASONS={'hook_timeout','input_timeout','hook_uncertain','handler_failed','receipt_unavailable','invalid_payload','binding_unreadable','binding_changed',
          'transcript_unavailable','source_exceeds_capture_limit','source_changed_during_capture','source_header_incomplete',
          'session_scope_unverified','transcript_missing','capture_deferred'}
 
@@ -77,9 +78,11 @@ def directory(path):
     if info.st_uid!=os.getuid() or info.st_mode&0o077:raise ValueError('private capture destination required')
     return path
 
-def begin(root,binding_hash,timeout):
+def begin(root,binding_hash,timeout,*,event=None,source_ref=None):
     if not re.fullmatch('[a-f0-9]{64}',binding_hash) or not 0.1<=timeout<=30:
         raise ValueError('selected binding and bounded deadline required')
+    if event not in EVENTS|{None} or (source_ref is not None and not re.fullmatch('[a-f0-9]{64}',source_ref)):
+        raise ValueError('validated capture identity required')
     with open(root/'capture.lock','a+b') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         owner=root/'owner.json'
@@ -95,7 +98,7 @@ def begin(root,binding_hash,timeout):
                 path.unlink();paths.remove(path)
         if len(paths)>=128:raise ValueError('capture supervision capacity requires attention')
         now=time.time_ns();attempt=dict(schema=SCHEMA,attempt_id=uuid.uuid4().hex,binding_sha256=binding_hash,
-            started_ns=now,updated_ns=now,deadline_ns=now+int((timeout+2)*1e9),state='started',reason=None,event=None,source_ref=None)
+            started_ns=now,updated_ns=now,deadline_ns=now+int((timeout+2)*1e9),state='started',reason=None,event=event,source_ref=source_ref)
         path=root/('attempt-'+attempt['attempt_id']+'.json');atomic(path,attempt)
         return path,attempt
 
@@ -126,29 +129,48 @@ def child(args):
     print(json.dumps({} if safe['capture_complete'] or safe['skipped'] else
         {'systemMessage':'HMK source capture deferred: '+safe['reason']}))
 
+def input_bytes(fd,timeout):
+    """Bounded native input, including a producer that never closes its pipe."""
+    deadline=time.monotonic()+min(timeout,1.0);raw=bytearray()
+    while len(raw)<=65536:
+        remaining=deadline-time.monotonic()
+        if remaining<=0 or not select.select([fd],[],[],remaining)[0]:raise TimeoutError()
+        part=os.read(fd,65537-len(raw))
+        if not part:return bytes(raw)
+        raw.extend(part)
+    return bytes(raw)
+
+def prepare_input(args):
+    """Read metadata only; no capture/import happens before the durable intent."""
+    try:binding_bytes=Path(args.binding).read_bytes()
+    except OSError:return b'',None,None,'binding_unreadable'
+    if hashlib.sha256(binding_bytes).hexdigest()!=args.binding_sha256:
+        return b'',None,None,'binding_changed'
+    try:raw=input_bytes(sys.stdin.fileno(),args.timeout_seconds)
+    except TimeoutError:return b'',None,None,'input_timeout'
+    try:
+        if len(raw)>65536:raise ValueError()
+        payload=json.loads(raw);binding=json.loads(binding_bytes)
+        if (not isinstance(payload,dict) or not isinstance(binding,dict) or
+                not isinstance(binding.get('allowed_cwds'),list)):raise ValueError()
+    except (ValueError,UnicodeError):return raw,None,None,'invalid_payload'
+    event=source_ref=None
+    # Do not retain metadata from unselected working directories.
+    if payload.get('cwd') in binding.get('allowed_cwds',[]):
+        candidate=payload.get('hook_event_name');sid=payload.get('session_id')
+        event=candidate if isinstance(candidate,str) and candidate in EVENTS else None
+        if isinstance(sid,str) and 0<len(sid)<=128:
+            source_ref=hashlib.sha256(sid.encode()).hexdigest()
+    return raw,event,source_ref,None
+
 def invoke(args):
-    root=directory(args.state_dir);path,attempt=begin(root,args.binding_sha256,args.timeout_seconds)
+    root=directory(args.state_dir)
+    raw,event,source_ref,error=prepare_input(args)
+    path,attempt=begin(root,args.binding_sha256,args.timeout_seconds,event=event,source_ref=source_ref)
     output={};receipt_path=root/('.result-'+attempt['attempt_id']+'.json')
     try:
-        try:binding_bytes=Path(args.binding).read_bytes()
-        except OSError:
-            attempt.update(state='failed',reason='binding_unreadable');return finish(path,attempt)
-        if hashlib.sha256(binding_bytes).hexdigest()!=args.binding_sha256:
-            attempt.update(state='failed',reason='binding_changed');return finish(path,attempt)
-        raw=sys.stdin.buffer.read(65537)
-        try:
-            if len(raw)>65536:raise ValueError()
-            payload=json.loads(raw);binding=json.loads(binding_bytes)
-            if not isinstance(payload,dict):raise ValueError()
-        except (ValueError,UnicodeError):
-            attempt.update(state='failed',reason='invalid_payload');return finish(path,attempt)
-        # Unselected events carry no retained session metadata.
-        if payload.get('cwd') in binding.get('allowed_cwds',[]):
-            event=payload.get('hook_event_name');sid=payload.get('session_id')
-            attempt['event']=event if event in EVENTS else None
-            if isinstance(sid,str) and 0<len(sid)<=128:
-                attempt['source_ref']=hashlib.sha256(sid.encode()).hexdigest()
-        atomic(path,attempt)
+        if error:
+            attempt.update(state='failed',reason=error);return finish(path,attempt)
         command=[sys.executable,'-B',str(Path(__file__).absolute()),'--child','--binding',args.binding,
                  '--binding-sha256',args.binding_sha256,'--handler-source',args.handler_source,'--child-receipt',str(receipt_path)]
         try:
@@ -193,7 +215,7 @@ def safe_projection(root,expected_binding_hash):
         resolved=a['state']=='resolved'
         excluded=resolved and a.get('resolution_kind')=='source_excluded'
         items.append(dict(incident_id='capture-'+a['attempt_id'],operation_id='capture-'+a['attempt_id'],phase='capture',
-            severity='info' if resolved else 'error',problem_code='timeout' if reason=='hook_timeout' else
+            severity='info' if resolved else 'error',problem_code='timeout' if reason in ('hook_timeout','input_timeout') else
                 'dispatch_unresolved' if reason=='hook_uncertain' else 'observation_unreadable',
             summary='Source excluded by the unchanged capture binding; no source bytes admitted.' if excluded else 'Source capture restored after explicit recovery.' if resolved else 'Source capture not confirmed: '+reason.replace('_',' ')+'.',
             action='Preserve the verified exclusion evidence; no source intake or paid retry is required.' if excluded else 'Inspect the native capture hook and retained attempt; restore source capture explicitly. Do not assume the source was preserved.',

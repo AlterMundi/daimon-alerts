@@ -65,6 +65,38 @@ class CaptureSupervision(unittest.TestCase):
     def test_timeout_before_any_inbox(self):
         result=self.invoke(self.sleeping_handler(),.1);self.assertIn('hook_timeout',result['systemMessage'])
         self.assertFalse(self.inbox.exists());self.assertEqual(safe_projection(self.state,self.digest)['items'][0]['problem_code'],'timeout')
+    def test_first_durable_intent_already_identifies_selected_source(self):
+        self.transcript_present()
+        program='''import os,signal,sys
+sys.path.insert(0,sys.argv.pop(1))
+import capture_supervisor as capture
+original=capture.atomic
+def kill_after_first_intent(path,value):
+ original(path,value)
+ if path.name.startswith('attempt-'):os.kill(os.getpid(),signal.SIGKILL)
+capture.atomic=kill_after_first_intent
+capture.main()
+'''
+        result=subprocess.run([sys.executable,'-c',program,str(ROOT/'scripts'),*self.command()[3:]],input=json.dumps(self.payload),text=True,capture_output=True)
+        self.assertEqual(result.returncode,-signal.SIGKILL)
+        self.assertFalse(self.inbox.exists())
+        attempt=self.attempts()[0]
+        self.assertEqual(attempt['event'],'Stop')
+        self.assertEqual(attempt['source_ref'],hashlib.sha256(b'fictional-session').hexdigest())
+        self.assertEqual(attempt['state'],'started')
+    def test_missing_input_is_bounded_and_visible_without_import(self):
+        process=subprocess.Popen(self.command(timeout=.1),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            process.wait(timeout=3)
+            self.assertEqual(process.returncode,0)
+            self.assertIn('input_timeout',process.stdout.read())
+            attempt=self.attempts()[0]
+            self.assertEqual(attempt['reason'],'input_timeout');self.assertEqual(attempt['state'],'failed')
+            self.assertEqual(safe_projection(self.state,self.digest)['items'][0]['problem_code'],'timeout')
+            self.assertFalse(self.inbox.exists())
+        finally:
+            if process.poll() is None:process.kill();process.wait()
+            process.stdin.close();process.stdout.close();process.stderr.close()
     def excluded_recovery(self):
         self.invoke();failure=self.attempts()[0]
         meta=dict(type='session_meta',payload=dict(id='fictional-session',cwd=str(self.root),timestamp='2019-12-31T23:59:59+00:00'))

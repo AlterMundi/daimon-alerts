@@ -385,3 +385,12 @@ one is uncertain and was not retried. Current receipt and exact continuation:
 https://github.com/nicoechaniz/hermes-memory-kit/blob/main/research/agent-memory-2026-10-06/pilots/stock-hook-evidence/integrated-capture-exclusion-adoption.json
 Rollback must retain a reader that understands source_excluded resolutions and
 all later journals/projections; an old reader would falsely claim captured bytes.
+
+First-intent identity diagnosis reproduced the actual pre-metadata gap: SIGKILL
+immediately after the first durable write left event/source empty in the previous
+wrapper. The corrected path reads the bounded native envelope before that write
+and includes selected identity atomically. Missing/unclosed input remains a
+bounded visible input_timeout, with no capture/import. Eight installed-HMK process
+checks and five observer/HTTP checks pass. This fixes future first-intent recovery;
+legacy unidentified attempts are not relabeled as captured or recovered. Native
+receiving adoption is a separate next operation; no paid model calls were used.
