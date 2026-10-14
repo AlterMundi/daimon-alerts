@@ -344,3 +344,13 @@ Telegram receipts11646/11647. Root status now has only the real fresh observer,
 statehealthy and0open incidents. Current-headCI38522190454passed. Eko/Oliva keep
 qualifiedcore741cfae; the additive retirement operator route is qualified/installed
 on the root instance that needs it, without forcing unnecessary receiver rollout.
+
+Sessions attention correction deployed on all three existing sidecars from
+Telecodex ad1891631a3589747d1db49f8b4c66d7b7bc4581 (PR92, CI38535932515).
+Only open, unacknowledged incidents light the amber header; resolved history
+remains neutral, retaining its own acknowledgment count. Existing UI regression
+passes; all three HTTPS asset hashes match the committed JavaScript, health200
+and anonymous Alerts401. Native listeners stayed running. Backend/state unchanged.
+Alerts skill1.1.1 from840e8f5be6b44499efbaf8d63cdec27e51281377 (Skills PR66)
+updates that same guidance; managed installations qualified on all three bodies.
+Actual phone acceptance of this visual correction remains unobserved.
