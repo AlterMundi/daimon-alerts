@@ -238,3 +238,18 @@ sidecar unit is installed. Their existing listeners remain untouched. Requested
 the supported separate receiving grants/adapters/resource-access route from
 Telecodex #82/comment6159775458. The CompAII loopback route is not silently reused
 across beings; other-body adoption remains pending actual receiving configuration.
+
+Human requested current Alerts skill guidance and installation on the selected
+three bodies. Published Skills PR63: v1.1.0 atff588bcc4044de0f626a1b424664bc7e03ee126e,
+contentSHA256ee2adbbfda6de17607d2fc95ce6755d6aebf16b0374652730f5a3317bb22fe25.
+Guidance covers implemented Sessions state/attention/history, explicit actor-bound
+acknowledgment, finite-worker/cadence observation, retention and known pre-inbox
+coverage limits; live per-body facts remain with the resource/owning record.
+Catalog/frontmatter validation, isolated selective describe/prepare/apply/status
+and canonical CI passed. Actual selective installations match the same version
+and digest on CompAII, Eko and Oliva. CompAII neutral surface-check passed; Eko
+and Oliva native skill probes force-reloaded and listed alerts with0 errors,
+0 model turns and no created threads. Oliva lacked GitHub fetch authentication;
+used a verified incremental Git bundle via the existing local Incus route, not
+another body's credentials. Other skill files and body bindings stayed unchanged.
+Skill installation/discovery does not qualify Eko/Oliva service access or delivery.
