@@ -273,3 +273,48 @@ including same-ID resolution, no repeated delivery intent, and capture-only
 SQLite migration preserving accepted revisions and refusing an active observer.
 Operator projection/recovery failures exit nonzero; native hook failures retain
 safe warnings. Installation and real receiving qualification remain separate.
+
+Recovered the concurrent receiving preparation before further rollout: Telecodex
+had independently qualified listener1983a929, Cluster PR240/d50605 and Sessions
+UIcda60452. Reused its content-addressed artifacts and managed idle-upgrade helper;
+the additionalcda listener candidate above was not selected. Eko receiving was
+already activated by that preparation; activated Oliva through the same approved
+helper at observed native idle. Actual helper receipt verifies preserved native
+bindings/goals/configuration and no database restore. No globalStop occurred.
+
+Installed qualified core741cfae and observerf922528 separately in both bodies,
+with newly generated body-local producer, qualification and consumer credentials.
+Own receiving scopes/adapters, authenticated status and anonymous denial qualify;
+no CompAII credentials, database, corpus or identity were transferred. Installed
+only the original prepared worker units, then connected Alerts in the existing
+Sessions sidecars. Real open/resolution Telegram receipts are Eko1357/1358 and
+Oliva2531/2534. InstalledHMK103a finite APIs preserved each fictional source and
+failed receipt, explicitly recovered once, and replayed idle with no additional
+transport/embedding dispatch. Service revision2, one intent per revision, scoped
+consumer inspection and resolved Sessions history are observed. Both scope
+violations and consumer publishing return403. Separate sidecar restarts retain
+exact receipt pairs with no duplicate messages and unchanged listener PIDs.
+
+Both own-bot Sessions menus were published/read back through the existing operator.
+Both HTTPS health routes return200 and anonymous Alerts401; original Sessions
+and Nexus health stay200. Reconciled Oliva's frontend host port with receiving
+selection after detecting the original port was occupied by the CompAII core.
+Per-body core endpoints stay private inside their own loopback namespaces.
+Phone launch/use on Eko/Oliva remains unobserved, distinct from backend inspection.
+
+Actual first worker invocations followed verified memory/capture SQLite snapshots.
+Oliva finished idle in5steps, retaining all4 original source revisions. Eko
+finished its configured9-step budget with pending remainder, complete capture/
+index phase receipts and idle/current organization; all10 original revisions
+remain intact. Budget exhaustion is not a provider failure and no paid retry was
+invoked. Both original midnight UTC timers are enabled for normal bounded work.
+Real safe observers are healthy; the initial unobserved incidents resolved.
+
+Installed capture supervision on all three bodies' existing Stop/SessionEnd hooks,
+preserving binding bytes/cutoffs and trusting exact hashes through native config
+control. Capture-only observer adoption retained accepted revisions and receipts;
+only independent observers were stopped during migration. CoreCI38516997098passed.
+A new selected native source event through these wrappers has not been qualified;
+real subprocess kill/timeout/explicit matching recapture and HTTP qualification
+remain separately recorded. Three-body Alerts skill1.1.0 stays current: its
+coverage guidance already requires a supported route or an explicit gap.
