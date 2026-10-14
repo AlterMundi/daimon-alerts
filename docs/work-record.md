@@ -227,3 +227,14 @@ worker/observer/receiving qualification; next invocation is2026-10-15 00:00 UTC.
 No explicit paid retry was scheduled or authorized by an alert. Eko/Oliva's
 receiving connections remain unqualified, and pre-inbox hook-failure coverage
 remains an explicit gap. Do not mark the overall multi-receiver task complete.
+
+After a human-reported native turn failure, inspected retained effects before
+continuing: core, real observer, Sessions and the authorized timer remain active;
+UI releasecda6045 and the controlled resolved/acknowledged receipt pair are intact.
+No test dispatch or producer recovery was repeated. Read-only receiving preflight
+through the existing sudo/Incus route confirms Eko/Oliva HMK handoffs are present,
+but their current Telegram configs have no session_control grant and no Sessions
+sidecar unit is installed. Their existing listeners remain untouched. Requested
+the supported separate receiving grants/adapters/resource-access route from
+Telecodex #82/comment6159775458. The CompAII loopback route is not silently reused
+across beings; other-body adoption remains pending actual receiving configuration.
