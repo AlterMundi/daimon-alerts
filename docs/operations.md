@@ -96,8 +96,9 @@ retain their accepted state and install the qualified compatible successor first
 
 `scripts/capture_supervisor.py` wraps the existing selected HMK capture API. Use
 it only for already-authorized hook events and source binding, preserving their
-admission boundary. It writes a separate private intent before starting a bounded
-synchronous child; it imports no model or canonical-memory writer. Only the
+admission boundary. It reads the small native event envelope with a bounded input wait and writes
+the selected source hash and event in the first private durable intent before
+starting a bounded synchronous child; it imports no model or canonical-memory writer. Only the
 original capture handler reads the selected transcript and writes its existing
 inbox. Payloads, transcript paths, source text, credentials and exception messages
 never enter the supervision ledger or public projections.
@@ -108,7 +109,7 @@ records only the selected binding; it does not certify capture or preserved work
 
 Supply `--binding`, exact file `--binding-sha256`, pinned `--handler-source`,
 private `--state-dir` and `--timeout-seconds`. Timeout must fit the native hook's
-deadline including wrapper startup and durable writes. Qualify the actual receiving
+deadline including wrapper startup, at most one second of input wait and durable writes. Qualify the actual receiving
 budget: a 1.5-second child bound failed on the real containers. The qualified
 2026-10-14 settings are Oliva child5/outer10 seconds for both events, Eko
 Stop15/30 and SessionEnd5/10; CompAII's existing setting remained sufficient.
@@ -196,3 +197,14 @@ is never evicted; admission cap returns 503. Acknowledgments are capped at 100 p
 incident; observers at 100. Delivery intents are bounded by incident transitions
 and <=100 configured routes. Inspect capacity rather than silently increasing it.
 Fictional testing and idle resource measurements do not prove production delivery.
+
+
+Capture identity atomicity: for a valid selected native envelope, the first
+attempt already contains its source hash and event. Killing the wrapper after
+that first durable write preserves enough identity for later matching recovery;
+there is no empty-attempt → identity-update interval. A missing or unclosed input
+pipe times out visibly, without calling the capture handler. This does not claim
+observation before Python starts or before the first durable write, and cannot
+retroactively identify legacy attempts that lack metadata. The bounded input
+failure retains `input_timeout`; deploy the compatible observer reader with the
+wrapper. Source text and raw event payload remain absent from the attempt ledger.
