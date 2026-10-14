@@ -333,3 +333,14 @@ and retained uncertain dispatch/pending incident. Five observer cases passed:
 retirement resolves only its owned observation-liveness incident, preserves the
 source journal and refuses subsequent ticks. Fixture CLI, Rust format/clippy/test
 and schema generation passed. No database-format change is needed.
+
+Root retirement runtime9e1bc07ade668b7932ad712c7d93cb0adfac75f5 installed after
+verified online SQLite backup; binarySHA256
+f52312e6cd0f10d8493a19d0b90a91ac1ad168e8d4ec8a91645ca17715f3e0d0.
+Only the two fictional supervision units were disabled and their own observation
+routes retired. Source/corpus/paid dispatch state and native listener remained
+untouched. Both existing observation incidents resolved atrevision2, with real
+Telegram receipts11646/11647. Root status now has only the real fresh observer,
+statehealthy and0open incidents. Current-headCI38522190454passed. Eko/Oliva keep
+qualifiedcore741cfae; the additive retirement operator route is qualified/installed
+on the root instance that needs it, without forcing unnecessary receiver rollout.
