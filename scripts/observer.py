@@ -174,8 +174,9 @@ class Observer:
                 if phase not in {'capture','organization','index'}: raise ValueError()
                 if receipt.get('state') in {'idle','complete'}:
                     blocked.discard(phase)
-                elif receipt.get('state') in {'pending','deferred'} and receipt.get('reason_code') in {
-                        'phase_failed','inspect_retained_phase_work','source_context_budget_exceeded'}:
+                elif (receipt.get('state') in {'pending','deferred'} and not receipt.get('alert_id')
+                        and receipt.get('reason_code') not in {
+                            'navigation_budget_exhausted','index_budget_exhausted','waiting_for_capture'}):
                     blocked.add(phase)
             if blocked_path.exists() or blocked:
                 atomic(blocked_path,sorted(blocked))
