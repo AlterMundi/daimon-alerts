@@ -1,0 +1,13 @@
+[Unit]
+Description=Finite filesystem capacity probe for Daimon Alerts
+After=daimon-alerts.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B %h/.local/libexec/daimon-alerts/current/scripts/storage_monitor.py --config %h/.config/daimon-alerts/storage.json
+UMask=0077
+NoNewPrivileges=yes
+MemoryMax=64M
+TasksMax=8
+TimeoutStartSec=20
+Nice=10

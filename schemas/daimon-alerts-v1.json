@@ -67,7 +67,8 @@
             "worker_stalled",
             "observation_stale",
             "observation_unreadable",
-            "notification_unavailable"
+            "notification_unavailable",
+            "storage_pressure"
           ]
         },
         "summary": {

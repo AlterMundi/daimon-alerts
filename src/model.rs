@@ -21,6 +21,7 @@ pub const CODES: &[&str] = &[
     "observation_stale",
     "observation_unreadable",
     "notification_unavailable",
+    "storage_pressure",
 ];
 pub fn now() -> i64 {
     SystemTime::now()
