@@ -165,6 +165,23 @@ class Observer:
             if worker.get('state')=='running' and age>self.config['stalled_seconds']: return 'worker_stalled',source
             if age>self.config['source_freshness_seconds']: return 'observation_stale',source
             if worker.get('state') not in ('running','pending','idle'): raise ValueError()
+            # Finite budget exhaustion is normal; a retained phase failure is not.
+            # Keep it open across a new invocation's empty/running projection:
+            # starting a retry does not establish recovery of the blocked phase.
+            blocked_path=self.state/'blocked-phases.json'
+            blocked=set(json.loads(blocked_path.read_text())) if blocked_path.exists() else set()
+            for phase,receipt in worker.get('phases',{}).items():
+                if phase not in {'capture','organization','index'}: raise ValueError()
+                if receipt.get('state') in {'idle','complete'}:
+                    blocked.discard(phase)
+                elif receipt.get('state') in {'pending','deferred'} and receipt.get('reason_code') in {
+                        'phase_failed','inspect_retained_phase_work','source_context_budget_exceeded'}:
+                    blocked.add(phase)
+            if blocked_path.exists() or blocked:
+                atomic(blocked_path,sorted(blocked))
+            if blocked:
+                self.observation_kind='phase_pending'
+                return 'worker_stalled',source
             daily=self.config.get('worker_daily_utc')
             if daily is not None:
                 hour,minute=map(int,daily.split(':'))
@@ -192,6 +209,7 @@ class Observer:
         summary={'unobserved':'HMK worker not started or unobserved: no first worker receipt.',
                  'launch_failure':'HMK worker launch failed before publishing a receipt.',
                  'capture_unreadable':'HMK capture supervision cannot be read; source coverage is unconfirmed.',
+                 'phase_pending':'Memory processing is blocked on retained phase work; inspect and explicitly recover the producer.',
                  'missed_invocation':'HMK worker missed its selected daily invocation.'}.get(detail,
                  'Worker observation requires attention: '+code.replace('_',' ')+'.')
         if prior and prior['processing_state']=='open' and prior['problem_code']==code:
