@@ -408,3 +408,12 @@ found, and the bounded older native-hook log window plus hook-item projection
 provided no identity. No timing-based attribution or source recovery is claimed.
 Current evidence:
 https://github.com/nicoechaniz/hermes-memory-kit/blob/main/research/agent-memory-2026-10-06/pilots/stock-hook-evidence/integrated-atomic-capture-adoption.json
+
+2026-10-15: Sessions reporting-source correction deployed to all three existing
+sidecars from Telecodex e43fa82c6106c18e5fd7b27a0a76bf484b39dccf (PR93).
+Incident titles identify DMK (Memory) for legacy/current memory producer names;
+exact producer and affected resource remain visible on open and resolved entries.
+UI regression covers both naming generations, other reporters and retained
+acknowledgment semantics. All three HTTPS assets match the committed JavaScript;
+health200 and anonymous Alerts401 verified. Native listener PIDs unchanged.
+This UI change neither recaptures sources nor resolves capture incidents.

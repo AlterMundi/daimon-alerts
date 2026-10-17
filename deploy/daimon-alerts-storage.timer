@@ -1,0 +1,10 @@
+[Unit]
+Description=Observe filesystem capacity without model calls
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

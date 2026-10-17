@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ID = {'type':'string','pattern':'^[A-Za-z0-9_-]{1,128}$'}
 TIME = {'type':'integer','minimum':0}
-CODES = ['payment_required','quota_exhausted','authentication_failed','access_denied','rate_limited','service_unavailable','timeout','transport_error','invalid_request','response_incomplete','dispatch_unresolved','provider_error','worker_stopped','worker_stalled','observation_stale','observation_unreadable','notification_unavailable']
+CODES = ['payment_required','quota_exhausted','authentication_failed','access_denied','rate_limited','service_unavailable','timeout','transport_error','invalid_request','response_incomplete','dispatch_unresolved','provider_error','worker_stopped','worker_stalled','observation_stale','observation_unreadable','notification_unavailable','storage_pressure']
 def enum(*values): return {'type':'string','enum':list(values)}
 def ref(name): return {'$ref':'#/$defs/'+name}
 def obj(fields, optional=()): return {'type':'object','additionalProperties':False,'properties':fields,'required':[k for k in fields if k not in optional]}
