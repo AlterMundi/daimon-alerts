@@ -149,6 +149,7 @@ class FiniteSupervision(unittest.TestCase):
     def test_missing_receipt_launch_failure_and_daily_cadence(self):
         with tempfile.TemporaryDirectory() as directory:
             observer=Observer.__new__(Observer)
+            observer.state=Path(directory)
             observer.config=dict(worker_state_dir=directory,worker_unit='hmk-memory-worker.service',
                 worker_mode='oneshot',source_freshness_seconds=90000,stalled_seconds=1800,
                 worker_daily_utc='00:00',worker_cadence_grace_seconds=2400)
@@ -184,6 +185,7 @@ class FiniteSupervision(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             worker=Path(directory)/'worker-status.json'
             observer=Observer.__new__(Observer)
+            observer.state=Path(directory)
             observer.config=dict(worker_state_dir=directory,worker_unit='hmk-memory-worker.service',
                                  worker_mode='oneshot',worker_systemd_scope='system',
                                  source_freshness_seconds=60,stalled_seconds=10)
@@ -229,4 +231,27 @@ class FiniteSupervision(unittest.TestCase):
                 self.assertEqual(observer.source_state()[0],'worker_stopped')
                 self.assertIn('--user',run.call_args.args[0])
 
-if __name__=='__main__': unittest.main(defaultTest=['FiniteSupervision','ObserverHTTP'],verbosity=2)
+class RetainedPhaseSupervision(unittest.TestCase):
+    def test_failure_survives_restart_and_only_success_resolves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            observer=Observer.__new__(Observer)
+            observer.state=Path(directory)
+            observer.config=dict(worker_state_dir=directory,source_freshness_seconds=60,stalled_seconds=60)
+            path=Path(directory)/'worker-status.json'
+            def write(state, phases):
+                path.write_text(json.dumps(dict(schema='hmk.worker-status/v1',updated_ns=time.time_ns(),state=state,phases=phases)))
+            write('pending', {'capture':dict(state='complete'), 'index':dict(state='complete')})
+            self.assertEqual(observer.source_state()[0], 'healthy')
+            write('pending', {'capture':dict(state='pending',reason_code='phase_failed')})
+            self.assertEqual(observer.source_state()[0], 'worker_stalled')
+            write('running', {})
+            self.assertEqual(observer.source_state()[0], 'worker_stalled')
+            restored=Observer.__new__(Observer)
+            restored.state=observer.state; restored.config=observer.config
+            self.assertEqual(restored.source_state()[0], 'worker_stalled')
+            write('pending', {'capture':dict(state='complete'), 'index':dict(state='pending',reason_code='inspect_retained_phase_work')})
+            self.assertEqual(restored.source_state()[0], 'worker_stalled')
+            write('pending', {'capture':dict(state='complete'), 'index':dict(state='complete')})
+            self.assertEqual(restored.source_state()[0], 'healthy')
+
+if __name__=='__main__': unittest.main(defaultTest=['FiniteSupervision','ObserverHTTP','RetainedPhaseSupervision'],verbosity=2)
