@@ -225,6 +225,57 @@ class Observer:
         now=int(time.time())
         value=dict(incident_id='observation-'+uuid.uuid4().hex,operation_id=self.config['observer_id'],phase='observation',severity='error',problem_code=code,summary=summary,action=ACTIONS[code],source_at=now,updated_at=now,processing_state='open',work_preserved=True)
         atomic(path,value); self.project(value)
+    def reconcile_budget(self, phase, expected_sha256, reason):
+        """Operator correction of a diagnosed stale phase classification.
+
+        This does not complete producer work. Automatic observation still holds
+        actual failures until a successful receipt; the operator must first
+        establish that this retained diagnostic misclassified finite work.
+        """
+        import hashlib
+        if phase not in {'capture','index'} or not isinstance(reason,str) or not 1 <= len(reason.strip()) <= 500:
+            raise ValueError('explicit bounded diagnostic correction required')
+        worker_path=Path(self.config['worker_state_dir'])/'worker-status.json'
+        raw=worker_path.read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=expected_sha256:
+            raise ValueError('worker receipt changed; inspect current evidence')
+        worker=json.loads(raw); receipt=worker.get('phases',{}).get(phase,{})
+        expected={'capture':'navigation_budget_exhausted','index':'index_budget_exhausted'}[phase]
+        if worker.get('state')!='pending' or receipt.get('state')!='pending' or receipt.get('reason_code')!=expected or receipt.get('alert_id'):
+            raise ValueError('only a verified finite-budget classification can be corrected')
+        key=hashlib.sha256((phase+expected_sha256).encode()).hexdigest()
+        audit_path=self.state/('budget-reconciliation-'+key+'.json')
+        identity=dict(phase=phase,worker_sha256=expected_sha256,reason=reason)
+        if audit_path.exists():
+            audit=json.loads(private_text(audit_path))
+            if audit['identity']!=identity:raise ValueError('retained reconciliation differs')
+            if audit.get('state')=='complete':return audit['receipt']
+        else:
+            blocked_path=self.state/'blocked-phases.json'
+            blocked=json.loads(private_text(blocked_path))
+            prior=json.loads(private_text(self.state/'source-incident.json'))
+            if phase not in blocked or prior['processing_state']!='open' or prior['problem_code']!='worker_stalled':
+                raise ValueError('matching retained phase diagnostic required')
+            audit=dict(identity=identity,state='prepared',blocked_before=blocked,incident_before=prior)
+            atomic(audit_path,audit)
+        blocked_path=self.state/'blocked-phases.json'
+        blocked=set(json.loads(private_text(blocked_path)));blocked.discard(phase)
+        atomic(blocked_path,sorted(blocked))
+        code,_=self.source_state()
+        if code!='healthy' or worker_path.read_bytes()!=raw:
+            blocked=set(json.loads(private_text(blocked_path)));blocked.add(phase)
+            atomic(blocked_path,sorted(blocked))
+            raise ValueError('other or changed unhealthy observation remains; correction refused')
+        prior=dict(audit['incident_before'])
+        prior.update(processing_state='resolved',updated_at=int(time.time()),severity='info',
+            summary='Prior phase diagnostic explicitly corrected: finite budget exhausted; producer work remains pending.')
+        atomic(self.state/'source-incident.json',prior)
+        revision=self.project(prior)
+        result=dict(diagnostic_corrected=True,producer_work_completed=False,processing_invoked=False,
+            incident_id=prior['incident_id'],revision=revision)
+        audit.update(state='complete',receipt=result);atomic(audit_path,audit)
+        return result
+
     def retire(self):
         """Explicitly retire a stopped route; never change producer work."""
         path=self.state/'source-incident.json'
@@ -332,12 +383,17 @@ def adopt_capture(config, prior_config):
 def main():
     os.umask(0o077)
     parser=argparse.ArgumentParser(); parser.add_argument('--config',required=True); parser.add_argument('--once',action='store_true')
-    parser.add_argument('--adopt-capture-from');parser.add_argument('--retire',action='store_true');args=parser.parse_args()
+    parser.add_argument('--adopt-capture-from');parser.add_argument('--retire',action='store_true')
+    parser.add_argument('--reconcile-budget-phase',choices=['capture','index'])
+    parser.add_argument('--worker-sha256');parser.add_argument('--reason');args=parser.parse_args()
     try:
         config=json.loads(private_text(args.config))
         if args.adopt_capture_from:
             print(json.dumps(adopt_capture(config,json.loads(private_text(args.adopt_capture_from)))));return
         observer=Observer(config)
+        if args.reconcile_budget_phase:
+            try:print(json.dumps(observer.reconcile_budget(args.reconcile_budget_phase,args.worker_sha256,args.reason)));return
+            finally:observer.db.close();observer.lock.close()
         if args.retire:
             try:print(json.dumps(observer.retire()));return
             finally:observer.db.close();observer.lock.close()

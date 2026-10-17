@@ -232,6 +232,44 @@ class FiniteSupervision(unittest.TestCase):
                 self.assertIn('--user',run.call_args.args[0])
 
 class RetainedPhaseSupervision(unittest.TestCase):
+    def test_explicit_budget_correction_preserves_pending_and_refuses_failures(self):
+        import hashlib
+        from observer import atomic
+        with tempfile.TemporaryDirectory() as directory:
+            observer=Observer.__new__(Observer);observer.state=Path(directory)
+            observer.config=dict(worker_state_dir=directory,source_freshness_seconds=60,stalled_seconds=60)
+            worker=observer.state/'worker-status.json'
+            def write(reason):
+                atomic(worker,dict(schema='hmk.worker-status/v1',updated_ns=time.time_ns(),state='pending',
+                    phases={'capture':dict(state='pending',reason_code=reason)}))
+                return hashlib.sha256(worker.read_bytes()).hexdigest()
+            atomic(observer.state/'blocked-phases.json',['capture'])
+            original=dict(incident_id='observation-example',phase='observation',processing_state='open',
+                problem_code='worker_stalled',summary='Retained phase failure')
+            atomic(observer.state/'source-incident.json',original)
+            bad=write('phase_failed')
+            with self.assertRaisesRegex(ValueError,'finite-budget'):
+                observer.reconcile_budget('capture',bad,'Actual failure must remain open.')
+            good=write('navigation_budget_exhausted');retained=worker.read_bytes()
+            with self.assertRaisesRegex(ValueError,'changed'):
+                observer.reconcile_budget('capture',bad,'Stale observation must be refused.')
+            # Ordinary observation does not silently correct the retained diagnosis.
+            self.assertEqual(observer.source_state()[0],'worker_stalled')
+            calls=[]
+            def project(prior):calls.append(dict(prior));return 2
+            observer.project=project
+            reason='Inspected producer receipts establish old failures recovered; later work is finite navigation.'
+            result=observer.reconcile_budget('capture',good,reason)
+            self.assertFalse(result['producer_work_completed'])
+            self.assertFalse(result['processing_invoked'])
+            self.assertEqual(worker.read_bytes(),retained)
+            self.assertEqual(observer.source_state()[0],'healthy')
+            self.assertEqual(calls[0]['processing_state'],'resolved')
+            audit=json.loads(next(observer.state.glob('budget-reconciliation-*.json')).read_text())
+            self.assertEqual(audit['incident_before'],original)
+            self.assertEqual(observer.reconcile_budget('capture',good,reason),result)
+            self.assertEqual(len(calls),1)
+
     def test_failure_survives_restart_and_only_success_resolves(self):
         with tempfile.TemporaryDirectory() as directory:
             observer=Observer.__new__(Observer)
