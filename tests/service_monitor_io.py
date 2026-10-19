@@ -28,6 +28,13 @@ class Probes(unittest.TestCase):
         with patch('service_monitor.read_json',side_effect=[{'running':True,'extension_connected':True},{'ok':False,'error':'private server text'}]):
             self.assertEqual(probe(dict(kind='webbridge',base_url='http://127.0.0.1:10086')),'extension_unresponsive')
 
+    def test_system_and_user_unit_observation_use_the_selected_scope(self):
+        result=Mock(returncode=0,stdout='LoadState=loaded\nActiveState=active\n')
+        for scope in ['user','system']:
+            with patch('service_monitor.subprocess.run',return_value=result) as run:
+                self.assertEqual(probe(dict(kind='unit',unit='fictional.service',scope=scope)),'healthy')
+                self.assertEqual('--user' in run.call_args.args[0],scope=='user')
+
     def test_roundtrip_discards_page_urls(self):
         private='https://example.org/?private-token=fictional'
         with patch('service_monitor.read_json',side_effect=[{'running':True,'extension_connected':True},{'ok':True,'data':{'success':True,'tabs':[{'url':private}]}}]) as read:
