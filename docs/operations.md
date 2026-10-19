@@ -224,8 +224,8 @@ Each target has opaque `id`, `resource_ref` and either:
   running flag, the extension connection and an actual extension `list_tabs`
   roundtrip under one fixed health session. All returned tab data is discarded.
   The observer never stores URLs, page contents or authentication state.
-- `kind: "unit"`, `unit: "example.service"`: checks the explicitly selected user
-  unit's LoadState and ActiveState. This proves process supervision only; it is
+- `kind: "unit"`, `unit: "example.service"`, optional `scope: "user"` or
+  `"system"`: checks the explicitly selected unit's LoadState and ActiveState. This proves process supervision only; it is
   not a functional application check. Add a qualified capability probe when one
   is required rather than calling every running process healthy.
 

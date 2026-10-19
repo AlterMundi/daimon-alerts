@@ -43,8 +43,8 @@ def read_json(url, payload=None):
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
     if target['kind'] == 'unit':
-        command = ['systemctl', '--user', 'show', target['unit'],
-                   '--property=LoadState,ActiveState']
+        command = ['systemctl'] + (['--user'] if target.get('scope', 'user') == 'user' else [])
+        command += ['show', target['unit'], '--property=LoadState,ActiveState']
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=3)
             props = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
@@ -95,6 +95,8 @@ class Monitor:
             if target['kind'] == 'webbridge':
                 local_url(target['base_url'])
             elif target['kind'] == 'unit':
+                if target.get('scope', 'user') not in ('user', 'system'):
+                    raise ValueError('explicit user/system unit scope required')
                 if not re.fullmatch('[A-Za-z0-9_.@:-]+\\.service', target['unit']):
                     raise ValueError('explicit service unit required')
             else:
