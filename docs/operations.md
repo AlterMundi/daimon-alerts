@@ -208,3 +208,52 @@ observation before Python starts or before the first durable write, and cannot
 retroactively identify legacy attempts that lack metadata. The bounded input
 failure retains `input_timeout`; deploy the compatible observer reader with the
 wrapper. Source text and raw event payload remain absent from the attempt ledger.
+
+## Critical service capability observation
+
+`scripts/service_monitor.py --config PRIVATE_CONFIG` is a finite standard-library
+adapter for the existing core, Telegram receiver and Sessions attention trail.
+It runs no models, loads no private browser cookies, navigates no pages, and
+performs no automatic repair or native-goal operation.
+
+The private configuration selects `base_url`, `token_file`, `state_dir`,
+`producer_id`, `observer_id`, `receiving_scope` and one to 16 explicit `targets`.
+Each target has opaque `id`, `resource_ref` and either:
+
+- `kind: "webbridge"`, `base_url: "http://127.0.0.1:PORT"`: checks the daemon's
+  running flag, the extension connection and an actual extension `list_tabs`
+  roundtrip under one fixed health session. All returned tab data is discarded.
+  The observer never stores URLs, page contents or authentication state.
+- `kind: "unit"`, `unit: "example.service"`: checks the explicitly selected user
+  unit's LoadState and ActiveState. This proves process supervision only; it is
+  not a functional application check. Add a qualified capability probe when one
+  is required rather than calling every running process healthy.
+
+Endpoint requests are loopback-only, proxy-free, redirect-free, bounded to 64 KiB
+and three seconds each. Configuration and projected incidents retain no response
+bodies, exception messages or private paths. Failures distinguish daemon absence,
+extension disconnection, failed extension operation, inactive unit and unreadable
+observation. An unreadable observation does not resolve an existing outage.
+Only a successful new probe resolves that incident at a higher revision.
+A later recurrence has a new incident ID. Repeated unchanged failures do not
+produce new incidents. Delivery remains the existing receiving adapter's job.
+
+Each run holds an exclusive lock. Projections are journaled before publication;
+uncertain acceptance is retried with exactly the retained bytes/revision before
+new observations can change the projection. Keep this journal through rollback.
+An independent core freshness registration makes a missing monitor actionable.
+Grant only publish/observe/status to this producer and observer in its actual
+receiving scope. New grants require an Alerts-only restart; never stop the
+native harness or Telegram listener for it.
+
+An optional user timer should use a cadence fitting its probe count and timeout
+within the core freshness window. For two selected services, 30-second cadence,
+30-second oneshot limit and 128 MiB memory cap are adequate; check actual completed
+invocations and retained status. No timer or broader service classification is
+installed just by reading this document.
+
+Kimi's daemon, isolated browser and virtual display should use the existing
+operator-selected profile/extension with service supervision and bounded resource
+use. A healthy daemon with no browser extension is a capability outage. Successful
+browser automation still does not prove a platform grants source access: YouTube
+may independently require sign-in. Preserve those separate diagnoses.
