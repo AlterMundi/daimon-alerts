@@ -297,3 +297,7 @@ unknown observations, exact unit selection, durable uncertain intent and budgets
 Set `ALERTS_TEST_USER_SYSTEMD=1` only for explicit receiving qualification: its
 transient fixture sleep service proves a real restart changes MainPID and a manual
 stop remains stopped. It never targets the production browser or another unit.
+
+The systemd effect uses `try-restart`, so a unit manually stopped between the
+active-state check and the repair request is not started again. Receiving
+qualification exercises this stop-during-probe race as well.
