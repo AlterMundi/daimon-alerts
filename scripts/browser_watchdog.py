@@ -12,7 +12,9 @@ from service_monitor import local_url, probe
 
 
 def systemctl(verb, unit):
-    return subprocess.run(['systemctl', '--user', verb, unit], capture_output=True,
+    # Atomically preserve a manual stop occurring after the health sample.
+    action = 'try-restart' if verb == 'restart' else verb
+    return subprocess.run(['systemctl', '--user', action, unit], capture_output=True,
                           text=True, timeout=35 if verb == 'restart' else 3)
 
 

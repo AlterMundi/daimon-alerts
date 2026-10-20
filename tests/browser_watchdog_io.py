@@ -71,8 +71,13 @@ class Watchdog(unittest.TestCase):
             result = tick(self.config, now=130, check=lambda t: 'extension_disconnected', control=systemctl)
             self.assertEqual(result['recovery'], 'accepted')
             self.assertNotEqual(before, pid())
-            subprocess.run(['systemctl', '--user', 'stop', unit], check=True, capture_output=True)
-            self.assertEqual(tick(self.config, now=500, check=lambda t: 'extension_disconnected', control=systemctl)['recovery'], 'none')
+            def stop_during_probe(target):
+                subprocess.run(['systemctl', '--user', 'stop', unit], check=True, capture_output=True)
+                return 'extension_disconnected'
+            # The operator stops after active-state inspection but before repair.
+            tick(self.config, now=500, check=stop_during_probe, control=systemctl)
+            self.assertEqual(pid(), '0')
+            self.assertEqual(tick(self.config, now=530, check=lambda t: 'extension_disconnected', control=systemctl)['recovery'], 'none')
         finally:
             subprocess.run(['systemctl', '--user', 'stop', unit], capture_output=True)
 
