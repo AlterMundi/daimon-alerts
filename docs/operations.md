@@ -257,3 +257,43 @@ operator-selected profile/extension with service supervision and bounded resourc
 use. A healthy daemon with no browser extension is a capability outage. Successful
 browser automation still does not prove a platform grants source access: YouTube
 may independently require sign-in. Preserve those separate diagnoses.
+
+
+## Explicit managed-browser functional recovery
+
+Process restart policies do not detect a dead extension while Chromium's main
+process stays alive. `scripts/browser_watchdog.py --config PRIVATE_CONFIG` is an
+optional, separately authorized finite controller reusing the same `probe` as
+service observation. It publishes no incidents and acknowledges none; the Alerts
+observer remains responsible for fresh functional truth and resolution delivery.
+Reading this documentation or installing the script enables no service.
+
+The private JSON configuration selects `base_url` (loopback only), `state_dir`
+and the explicit user-service names `browser_unit`, `daemon_unit`, `display_unit`.
+A 30-second systemd timer can invoke a oneshot with TimeoutStartSec60, MemoryMax128M,
+TasksMax32 and UMask0077. The three managed services retain normal systemd exit
+restart supervision. Match browser TasksMax to actual Chromium process/thread
+use; an exhausted pids limit can kill the extension without killing the browser.
+Inspect pids.events and actual errors before calling a failure an OOM.
+
+The watchdog observes all three units before checking capability. An inactive or
+failed prerequisite prevents automatic recovery, preserving manual stops and
+systemd restart limits. Unknown observations do not trigger restarts. Two failed
+samples at least ten seconds apart are required. Daemon-unavailable restarts only
+the selected daemon; extension-disconnected/unresponsive restarts only the selected
+browser. Profile/custody is retained, but browser restarts can interrupt open tabs;
+no request, page action, model, sensor, goal or uncertain task is replayed.
+
+Durable locked state records an attempt before invoking systemctl. An uncertain
+acknowledgment consumes the same recovery budget: at most one restart per five
+minutes and three in any hour. A healthy probe clears the consecutive-failure
+counter, not the rate-limit history. Restart acceptance never claims functional
+recovery: the next actual probe must succeed. Repeated failure remains actionable
+through the existing service incident. Rollback disables only this watchdog timer
+and retains its state and Alerts journal; do not restore old journals.
+
+`python tests/browser_watchdog_io.py` checks failure confirmation, manual stops,
+unknown observations, exact unit selection, durable uncertain intent and budgets.
+Set `ALERTS_TEST_USER_SYSTEMD=1` only for explicit receiving qualification: its
+transient fixture sleep service proves a real restart changes MainPID and a manual
+stop remains stopped. It never targets the production browser or another unit.

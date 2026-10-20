@@ -19,6 +19,7 @@ jobs:
       - run: python tests/http_contract.py
       - run: python tests/storage_monitor_io.py
       - run: python tests/service_monitor_io.py
+      - run: python tests/browser_watchdog_io.py
       - run: python tests/fixture_cli.py
       - uses: actions/checkout@v4
         with:
