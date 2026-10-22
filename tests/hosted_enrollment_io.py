@@ -3,7 +3,7 @@ import json,sys,subprocess,tempfile,unittest,threading
 from pathlib import Path
 from unittest.mock import Mock,patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
-from service_monitor import Monitor, enrollments, probe
+from service_monitor import Monitor, enrollments, probe, Unavailable
 
 class Hosted(unittest.TestCase):
  def test_new_enrollment_after_monitor_start_and_existing_incident_survives_restart(self):
@@ -92,5 +92,20 @@ class Hosted(unittest.TestCase):
     clock[0]+=9;future=next(iter(pending));return {future},set(pending)-{future}
    with patch('service_monitor.concurrent.futures.wait',side_effect=interleaved),patch('service_monitor.time.monotonic',side_effect=lambda:clock[0]):monitor.tick(lambda t:'healthy',now=100)
    self.assertEqual([at for at,state in observations if state=='observation_unreadable'],[18,36]);self.assertEqual(observations[-1][1],'healthy');monitor.close()
+
+class UnavailableHeartbeat(unittest.TestCase):
+ def test_unavailable_core_does_not_busy_spin_pending_native_probes(self):
+  with tempfile.TemporaryDirectory() as temporary:
+   root=Path(temporary);root.chmod(0o700)
+   registry=root/'registry';registry.mkdir(mode=0o700)
+   p=registry/'one.json';p.write_text(json.dumps(dict(schema='cluster-runtime-health-enrollment/v1',name='one',instance='dm-one',resource_ref='container-dm-one',plan_digest='a'*64)));p.chmod(0o600)
+   cfg=dict(producer_id='hosted',observer_id='observer',receiving_scope='operator',base_url='http://127.0.0.1:9',token_file=str(root/'token'),state_dir=str(root/'state'),targets=[dict(id='hosted',resource_ref='host',kind='enrollment_registry',registry=str(registry),incus_binary='/usr/bin/incus',full_avg60_percent=5)])
+   client=Mock();client.call.side_effect=Unavailable('offline');monitor=Monitor(cfg,client);clock=[0];timeouts=[]
+   def wait(pending,**kwargs):
+    timeouts.append(kwargs['timeout'])
+    if len(timeouts)==1:clock[0]=11;return set(),set(pending)
+    return set(pending),set()
+   with patch('service_monitor.concurrent.futures.wait',side_effect=wait),patch('service_monitor.time.monotonic',side_effect=lambda:clock[0]):result=monitor.tick(lambda t:'healthy',now=100)
+   self.assertEqual(timeouts,[10,10]);self.assertEqual(result['service_state'],'unavailable');monitor.close()
 
 if __name__=='__main__':unittest.main()

@@ -337,14 +337,15 @@ class Monitor:
                     done, _ = concurrent.futures.wait(pending,
                         timeout=max(0, heartbeat_at - time.monotonic()),
                         return_when=concurrent.futures.FIRST_COMPLETED)
-                    if time.monotonic() >= heartbeat_at and available:
-                        try:
-                            self.client.call('PUT', '/v1/observers/' + self.config['observer_id'],
-                                dict(receiving_scope=self.config['receiving_scope'],
-                                     source_at=int(time.time()) if live_clock else now,
-                                     source_state='observation_unreadable'))
-                        except Unavailable:
-                            available = False
+                    if time.monotonic() >= heartbeat_at:
+                        if available:
+                            try:
+                                self.client.call('PUT', '/v1/observers/' + self.config['observer_id'],
+                                    dict(receiving_scope=self.config['receiving_scope'],
+                                         source_at=int(time.time()) if live_clock else now,
+                                         source_state='observation_unreadable'))
+                            except Unavailable:
+                                available = False
                         heartbeat_at = time.monotonic() + 10
                     for future in done:
                         yield pending.pop(future), future.result()
