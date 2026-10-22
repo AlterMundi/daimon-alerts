@@ -42,6 +42,45 @@ def read_json(url, payload=None):
 
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'native_codex':
+        try:
+            command = ['systemctl'] + (['--user'] if target.get('scope') == 'user' else [])
+            try:
+                state = subprocess.run(command + ['show', target['unit'], '-p', 'NRestarts', '--value'],
+                                       capture_output=True, text=True, timeout=3)
+                if state.returncode == 0:
+                    target['_counters'] = {'restarts': int(state.stdout.strip())}
+            except (OSError,ValueError,subprocess.TimeoutExpired):
+                pass
+            result = subprocess.run([target['binary'], 'app-server', 'daemon', 'version'],
+                                    capture_output=True, text=True, timeout=15)
+            if result.returncode:
+                return 'native_unresponsive'
+            value = json.loads(result.stdout)
+            if value.get('status') == 'running' and isinstance(value.get('appServerVersion'), str):
+                return 'healthy' if '_counters' in target else 'observation_unreadable'
+            return 'native_unresponsive'
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+            return 'native_unresponsive'
+    if target['kind'] == 'cgroup_memory':
+        try:
+            root = Path(target['cgroup_root'])
+            events = dict(line.split() for line in (root / 'memory.events').read_text().splitlines())
+            target['_counters'] = {'oom_kill': int(events['oom_kill'])}
+            current = int((root / 'memory.current').read_text())
+            maximum = (root / 'memory.max').read_text().strip()
+            if current < 0 or maximum != 'max' and int(maximum) <= 0:
+                return 'observation_unreadable'
+            pressure = dict(line.split(' ', 1) for line in
+                            (root / 'memory.pressure').read_text().splitlines())
+            full = dict(field.split('=') for field in pressure['full'].split())
+            stalled = float(full['avg60'])
+            if not 0 <= stalled <= 100:
+                return 'observation_unreadable'
+            return ('memory_reclaim_pressure' if stalled >= target['full_avg60_percent']
+                    else 'healthy')
+        except (OSError, ValueError, KeyError):
+            return 'observation_unreadable'
     if target['kind'] == 'unit':
         command = ['systemctl'] + (['--user'] if target.get('scope', 'user') == 'user' else [])
         command += ['show', target['unit'], '--property=LoadState,ActiveState']
@@ -98,7 +137,8 @@ def probe(target):
 
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'observation_unreadable', 'daemon_unavailable',
-           'extension_disconnected', 'extension_unresponsive'}
+           'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
+           'memory_reclaim_pressure', 'native_restarted', 'memory_oom'}
 
 
 class Monitor:
@@ -112,6 +152,15 @@ class Monitor:
             identifier(target['id']); identifier(target['resource_ref'])
             if target['kind'] == 'webbridge':
                 local_url(target['base_url'])
+            elif target['kind'] == 'native_codex':
+                if (not Path(target['binary']).is_absolute()
+                        or target.get('scope', 'system') not in ('user','system')
+                        or not re.fullmatch('[A-Za-z0-9_.@:-]+\\.service',target['unit'])):
+                    raise ValueError('explicit native binary and service required')
+            elif target['kind'] == 'cgroup_memory':
+                if (not Path(target['cgroup_root']).is_absolute()
+                        or not 0 < target['full_avg60_percent'] <= 100):
+                    raise ValueError('explicit cgroup and bounded stall threshold required')
             elif target['kind'] == 'unit':
                 if target.get('scope', 'user') not in ('user', 'system'):
                     raise ValueError('explicit user/system unit scope required')
@@ -147,6 +196,7 @@ class Monitor:
         self.db.executescript('CREATE TABLE IF NOT EXISTS binding(value TEXT);'
                              'CREATE TABLE IF NOT EXISTS incidents(id TEXT PRIMARY KEY, content TEXT);'
                              'CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY, content TEXT);'
+                             'CREATE TABLE IF NOT EXISTS runtime_counters(id TEXT PRIMARY KEY, content TEXT);'
                              'CREATE TABLE IF NOT EXISTS status(value TEXT);')
         selection = {k: config[k] for k in ('producer_id', 'observer_id', 'receiving_scope', 'targets', 'base_url', 'token_file')}
         binding = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()
@@ -181,19 +231,24 @@ class Monitor:
         if not active and (not prior or prior['processing_state'] == 'resolved'):
             return
         summary = target['id'] + ': ' + reason.replace('_', ' ') + '.'
+        severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
         if prior and prior['processing_state'] == 'open':
             if active and prior['summary'] == summary:
                 return
             value = dict(prior, revision=prior['revision'] + 1, updated_at=max(now, prior['updated_at']),
                          summary=summary, processing_state='open' if active else 'resolved',
-                         severity='error' if active else 'info')
+                         severity=severity if active else 'info')
         else:
             value = dict(schema='daimon-alerts/v1', producer_id=self.config['producer_id'],
                          receiving_scope=self.config['receiving_scope'], resource_ref=target['resource_ref'],
                          incident_id=target['id'] + '-' + secrets.token_hex(12), operation_id='service-' + target['id'],
-                         revision=1, phase='availability', problem_code='service_unavailable',
-                         severity='error', processing_state='open', summary=summary,
-                         action='Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.',
+                         revision=1, phase='availability', problem_code=(
+                             'worker_stalled' if target['kind'] == 'cgroup_memory'
+                             else 'service_unavailable'),
+                         severity=severity, processing_state='open', summary=summary,
+                         action=('Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
+                                 if target['kind'] in ('native_codex', 'cgroup_memory') else
+                                 'Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.'),
                          source_at=now, updated_at=now, work_preserved=True)
         raw = json.dumps(value, sort_keys=True)
         with self.db:
@@ -209,12 +264,23 @@ class Monitor:
             available = False
         rows = []
         for target in self.config['targets']:
+            counters = None
             try:
                 selected = dict(target)
                 demand_unit = self.config.get('demand_units', {}).get(target['id'])
                 if demand_unit:
                     selected['demand_unit'] = demand_unit
                 reason = check(selected)
+                counters = selected.get('_counters')
+                if counters is not None:
+                    prior = self.db.execute('SELECT content FROM runtime_counters WHERE id=?',
+                                            (target['id'],)).fetchone()
+                    prior = json.loads(prior[0]) if prior else {}
+                    if counters.get('oom_kill',0) > prior.get('oom_kill',counters.get('oom_kill',0)):
+                        reason = 'memory_oom'
+                    elif (reason == 'healthy' and counters.get('restarts',0)
+                          > prior.get('restarts',counters.get('restarts',0))):
+                        reason = 'native_restarted'
                 if reason not in REASONS:
                     reason = 'observation_unreadable'
             except Exception:
@@ -224,6 +290,12 @@ class Monitor:
             if available:
                 # Unknown observation never resolves a retained outage.
                 self.transition(target, reason, now)
+                # Retain the incident/outbox before consuming the counter edge.
+                # Service outage or a crash must not erase an observed restart.
+                if counters is not None:
+                    with self.db:
+                        self.db.execute('INSERT OR REPLACE INTO runtime_counters VALUES(?,?)',
+                                        (target['id'],json.dumps(counters)))
         if available:
             try:
                 self.flush()

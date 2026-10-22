@@ -38,10 +38,15 @@ class Contract(unittest.TestCase):
         self.incident='/v1/incidents/fictional-hmk/credit-failure-001'
     def start(self):
         self.process=subprocess.Popen([str(ROOT/'target/debug/daimon-alerts'),'serve',str(self.path)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        for _ in range(100):
+        # Readiness is not a disk/CPU benchmark. Keep one bounded wait for the
+        # actual listener rather than a three-second loop that fails cold I/O.
+        deadline=time.monotonic()+30
+        while time.monotonic()<deadline:
             try:
                 if self.call('GET','/v1/status')[0]==200: return
             except OSError: time.sleep(.03)
+            if self.process.poll() is not None:break
+        self.process.terminate();self.process.communicate(timeout=5)
         raise RuntimeError('server did not start')
     def tearDown(self):
         if self.process.poll() is None: self.process.terminate()
