@@ -67,13 +67,30 @@ class Hosted(unittest.TestCase):
     self.assertTrue(memory_accepted.is_set());return 'healthy'
    # Exercise the heartbeat branch without a real ten-second stall.
    import concurrent.futures
-   actual_wait=concurrent.futures.wait;first=[True]
+   actual_wait=concurrent.futures.wait;first=[True];clock=[0]
    def bounded_wait(pending,**kwargs):
-    if first[0]:first[0]=False;return set(),set(pending)
+    if first[0]:first[0]=False;clock[0]=11;return set(),set(pending)
     return actual_wait(pending,**kwargs)
-   with patch('service_monitor.concurrent.futures.wait',side_effect=bounded_wait):result=monitor.tick(check,now=100)
+   with patch('service_monitor.concurrent.futures.wait',side_effect=bounded_wait), patch('service_monitor.time.monotonic',side_effect=lambda:clock[0]):result=monitor.tick(check,now=100)
    self.assertIn('observation_unreadable',heartbeats)
    self.assertTrue(any(t['state']=='enrollment_unavailable' for t in result['targets']))
    monitor.close()
+
+ def test_heartbeat_deadline_survives_frequent_interleaved_completions(self):
+  with tempfile.TemporaryDirectory() as temporary:
+   root=Path(temporary);root.chmod(0o700);registry=root/'registry';registry.mkdir(mode=0o700)
+   for name in ('one','two','three','four'):
+    p=registry/(name+'.json');p.write_text(json.dumps(dict(schema='cluster-runtime-health-enrollment/v1',name=name,instance='dm-'+name,resource_ref='container-dm-'+name,plan_digest='a'*64)));p.chmod(0o600)
+   target=dict(id='hosted',resource_ref='host',kind='enrollment_registry',registry=str(registry),incus_binary='/usr/bin/incus',full_avg60_percent=5)
+   cfg=dict(producer_id='hosted',observer_id='observer',receiving_scope='operator',base_url='http://127.0.0.1:9',token_file=str(root/'token'),state_dir=str(root/'state'),targets=[target])
+   client=Mock();observations=[];clock=[0]
+   def call(method,path,value):
+    if '/observers/' in path:observations.append((clock[0],value['source_state']))
+    return {}
+   client.call.side_effect=call;monitor=Monitor(cfg,client)
+   def interleaved(pending,**kwargs):
+    clock[0]+=9;future=next(iter(pending));return {future},set(pending)-{future}
+   with patch('service_monitor.concurrent.futures.wait',side_effect=interleaved),patch('service_monitor.time.monotonic',side_effect=lambda:clock[0]):monitor.tick(lambda t:'healthy',now=100)
+   self.assertEqual([at for at,state in observations if state=='observation_unreadable'],[18,36]);self.assertEqual(observations[-1][1],'healthy');monitor.close()
 
 if __name__=='__main__':unittest.main()

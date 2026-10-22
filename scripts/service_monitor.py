@@ -332,10 +332,12 @@ class Monitor:
                 return
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
                 pending = {pool.submit(observe, t): t for t in native}
+                heartbeat_at = time.monotonic() + 10
                 while pending:
-                    done, _ = concurrent.futures.wait(pending, timeout=10,
+                    done, _ = concurrent.futures.wait(pending,
+                        timeout=max(0, heartbeat_at - time.monotonic()),
                         return_when=concurrent.futures.FIRST_COMPLETED)
-                    if not done and available:
+                    if time.monotonic() >= heartbeat_at and available:
                         try:
                             self.client.call('PUT', '/v1/observers/' + self.config['observer_id'],
                                 dict(receiving_scope=self.config['receiving_scope'],
@@ -343,6 +345,7 @@ class Monitor:
                                      source_state='observation_unreadable'))
                         except Unavailable:
                             available = False
+                        heartbeat_at = time.monotonic() + 10
                     for future in done:
                         yield pending.pop(future), future.result()
         for target, (reason, counters) in observations():
