@@ -16,7 +16,7 @@ jobs:
         run: |
           python3 - <<'PYTHON'
           import os,subprocess
-          allowed={'scripts/service_monitor.py','scripts/client.py','tests/service_monitor_io.py','tests/runtime_health_io.py','tests/http_contract.py','docs/runtime-health.md','.github/workflows/ci.yml'}
+          allowed={'scripts/service_monitor.py','scripts/client.py','tests/service_monitor_io.py','tests/runtime_health_io.py','tests/hosted_enrollment_io.py','tests/http_contract.py','docs/runtime-health.md','.github/workflows/ci.yml'}
           diff=subprocess.run(['git','diff','--name-only',os.environ['BASE'],'HEAD'],capture_output=True,text=True)
           changed=set(diff.stdout.splitlines())
           narrow=diff.returncode==0 and bool(changed) and changed<=allowed
@@ -45,6 +45,7 @@ jobs:
         run: python tests/storage_monitor_io.py
       - run: python tests/service_monitor_io.py
       - run: python tests/runtime_health_io.py
+      - run: python tests/hosted_enrollment_io.py
       - if: steps.scope.outputs.runtime_only != 'true'
         run: python tests/browser_watchdog_io.py
       - if: steps.scope.outputs.runtime_only != 'true'
