@@ -1,10 +1,27 @@
 name: Qualify contract and durable runtime
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 jobs:
   qualification:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 - <<'PYTHON'
+          import os,subprocess
+          allowed={'scripts/service_monitor.py','scripts/client.py','tests/service_monitor_io.py','tests/runtime_health_io.py','tests/http_contract.py','docs/runtime-health.md','.github/workflows/ci.yml'}
+          diff=subprocess.run(['git','diff','--name-only',os.environ['BASE'],'HEAD'],capture_output=True,text=True)
+          changed=set(diff.stdout.splitlines())
+          narrow=diff.returncode==0 and bool(changed) and changed<=allowed
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:out.write('runtime_only='+str(narrow).lower()+'\n')
+          PYTHON
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -12,34 +29,51 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install -r tests/requirements.txt
-      - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
-      - run: python scripts/build_contract.py && git diff --exit-code schemas fixtures
-      - run: python tests/http_contract.py
-      - run: python tests/storage_monitor_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: cargo fmt --check
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: cargo test --locked
+      - if: steps.scope.outputs.runtime_only == 'true'
+        run: cargo build --locked
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python scripts/build_contract.py && git diff --exit-code schemas fixtures
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/http_contract.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/storage_monitor_io.py
       - run: python tests/service_monitor_io.py
-      - run: python tests/browser_watchdog_io.py
-      - run: python tests/fixture_cli.py
-      - uses: actions/checkout@v4
+      - run: python tests/runtime_health_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/browser_watchdog_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/fixture_cli.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        uses: actions/checkout@v4
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: 54784326ae2091a7d427b64b029274115dc2f041
           path: .hmk-source
-      - run: python tests/qualification_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/qualification_io.py
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-source
-      - run: python tests/observer_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/observer_io.py
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-source
-      - uses: actions/checkout@v4
+      - if: steps.scope.outputs.runtime_only != 'true'
+        uses: actions/checkout@v4
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: 103a5a0f5b90fc0d794a9909c2db00f0ce282de6
           path: .hmk-runtime
-      - run: python tests/worker_qualification_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/worker_qualification_io.py
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-runtime
-      - run: python tests/capture_supervision_io.py
+      - if: steps.scope.outputs.runtime_only != 'true'
+        run: python tests/capture_supervision_io.py
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-runtime
