@@ -18,8 +18,11 @@ Add only explicitly selected targets to an owner-private observer config:
 
 Run the finite observer as the same receiving service owner with its actual HOME
 and CODEX_HOME. Use a separately scoped publish/observe/status actor and existing
-receiving route; keep tokens/configuration private. A60-second timer and a bounded
-oneshot deadline select technical observation only. Its persisted journal retains
+receiving route; keep tokens/configuration private. Select a timer interval below
+the receiving core's configured freshness window, allowing for probe duration
+and scheduling jitter: a30-second freshness window needs a15-second interval,
+not a60-second interval that becomes stale between healthy invocations. A bounded
+oneshot deadline selects technical observation only. Its persisted journal retains
 incident/revision/outbox and counter baselines across restarts. Counter edges are
 consumed only after the incident is durable; an unavailable service cannot erase
 an already-baselined OOM or restart. A later healthy native/control or memory
@@ -33,6 +36,14 @@ Persistent unresponsiveness alerts while the process is retained. No competing
 restart loop, unbounded memory growth, account replacement or task replay is added.
 Memory capacity changes are explicit operator selections against host headroom;
 never claim that monitoring automatically creates RAM or solves every disk stall.
+
+If the guest can stall, observe its selected host cgroup independently through the
+host's existing Alerts route. This reads resource metrics without guest credentials
+or model turns. Host memory observation does not establish guest native readiness
+or disk health; retain the guest's actual control probe and its separate receiving
+delivery evidence. Qualify the real incident and Telegram acceptance rather than
+repeating a fictional outage. The same incident resolves through a later healthy
+observation; acknowledgment does not clear it.
 
 Install immutable selected source/client files and a separate scoped observer
 state. Adding its actor requires only the receiving Alerts core to reload its
