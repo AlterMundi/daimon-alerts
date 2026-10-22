@@ -52,6 +52,24 @@ def probe(target):
                                  and props.get('ActiveState') == 'active') else 'unit_inactive'
         except (OSError, subprocess.TimeoutExpired):
             return 'observation_unreadable'
+    # An explicitly stopped on-demand browser is available to start, not healthy
+    # as a live browser. Failed/unknown unit states retain ordinary alerting.
+    if target.get('demand_unit'):
+        try:
+            result = subprocess.run(['systemctl', '--user', 'show', target['demand_unit'],
+                                     '--property=LoadState,ActiveState,SubState'],
+                                    capture_output=True, text=True, timeout=3)
+            props = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+            if result.returncode or props.get('LoadState') != 'loaded':
+                return 'observation_unreadable'
+            if props.get('ActiveState') == 'inactive' and props.get('SubState') == 'dead':
+                return 'standby'
+            if props.get('ActiveState') == 'failed':
+                return 'unit_inactive'
+            if props.get('ActiveState') != 'active':
+                return 'observation_unreadable'
+        except (OSError, subprocess.TimeoutExpired):
+            return 'observation_unreadable'
     base = target['base_url'].rstrip('/')
     try:
         value = read_json(base + '/status')
@@ -79,7 +97,7 @@ def probe(target):
         return 'extension_unresponsive'
 
 
-REASONS = {'healthy', 'unit_inactive', 'observation_unreadable', 'daemon_unavailable',
+REASONS = {'healthy', 'standby', 'unit_inactive', 'observation_unreadable', 'daemon_unavailable',
            'extension_disconnected', 'extension_unresponsive'}
 
 
@@ -101,6 +119,17 @@ class Monitor:
                     raise ValueError('explicit service unit required')
             else:
                 raise ValueError('unsupported health probe')
+        # Demand policy changes observation, not target/producer identity. Keep
+        # the existing incident journal and pending revisions across adoption.
+        demand = config.get('demand_units', {})
+        if not isinstance(demand, dict):
+            raise ValueError('explicit demand unit mapping required')
+        by_id = {t['id']: t for t in targets}
+        for target_id, unit in demand.items():
+            if (target_id not in by_id or by_id[target_id]['kind'] != 'webbridge'
+                    or not isinstance(unit, str)
+                    or not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service', unit)):
+                raise ValueError('on-demand policy requires an existing browser and user unit')
         self.config = config
         directory = Path(config['state_dir'])
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -148,7 +177,7 @@ class Monitor:
             raise ValueError('unsafe probe result')
         prior = self.db.execute('SELECT content FROM incidents WHERE id=?', (target['id'],)).fetchone()
         prior = json.loads(prior[0]) if prior else None
-        active = reason != 'healthy'
+        active = reason not in ('healthy', 'standby')
         if not active and (not prior or prior['processing_state'] == 'resolved'):
             return
         summary = target['id'] + ': ' + reason.replace('_', ' ') + '.'
@@ -181,7 +210,11 @@ class Monitor:
         rows = []
         for target in self.config['targets']:
             try:
-                reason = check(target)
+                selected = dict(target)
+                demand_unit = self.config.get('demand_units', {}).get(target['id'])
+                if demand_unit:
+                    selected['demand_unit'] = demand_unit
+                reason = check(selected)
                 if reason not in REASONS:
                     reason = 'observation_unreadable'
             except Exception:

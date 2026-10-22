@@ -35,6 +35,20 @@ class Probes(unittest.TestCase):
                 self.assertEqual(probe(dict(kind='unit',unit='fictional.service',scope=scope)),'healthy')
                 self.assertEqual('--user' in run.call_args.args[0],scope=='user')
 
+    def test_on_demand_stop_is_standby_but_failure_is_not(self):
+        target = dict(kind='webbridge', base_url='http://127.0.0.1:10086',
+                      demand_unit='fictional-browser.service')
+        for state, sub, expected in [('inactive', 'dead', 'standby'),
+                                     ('failed', 'failed', 'unit_inactive'),
+                                     ('activating', 'start', 'observation_unreadable')]:
+            result = Mock(returncode=0, stdout=f'LoadState=loaded\nActiveState={state}\nSubState={sub}\n')
+            with patch('service_monitor.subprocess.run', return_value=result), patch('service_monitor.read_json') as read:
+                self.assertEqual(probe(target), expected)
+                read.assert_not_called()
+        result = Mock(returncode=0, stdout='LoadState=loaded\nActiveState=active\nSubState=running\n')
+        with patch('service_monitor.subprocess.run', return_value=result), patch('service_monitor.read_json', side_effect=OSError()):
+            self.assertEqual(probe(target), 'daemon_unavailable')
+
     def test_roundtrip_discards_page_urls(self):
         private='https://example.org/?private-token=fictional'
         with patch('service_monitor.read_json',side_effect=[{'running':True,'extension_connected':True},{'ok':True,'data':{'success':True,'tabs':[{'url':private}]}}]) as read:
@@ -91,6 +105,27 @@ class Durable(unittest.TestCase):
             self.assertEqual(sent[0],json.loads(pending))
             self.assertEqual(sent[-1]['processing_state'],'resolved')
         finally:monitor.close()
+
+    def test_demand_policy_preserves_journal_and_resolves_as_standby(self):
+        monitor = Monitor(self.config, self.client)
+        monitor.tick(lambda _: 'extension_disconnected', now=10)
+        first = self.sent[-1]['incident_id']
+        monitor.close()
+        changed = dict(self.config, demand_units={'browser': 'fictional-browser.service'})
+        monitor = Monitor(changed, self.client)
+        try:
+            seen = []
+            monitor.tick(lambda target: seen.append(target) or 'standby', now=11)
+            self.assertEqual(seen[0]['demand_unit'], 'fictional-browser.service')
+            self.assertEqual(self.sent[-1]['incident_id'], first)
+            self.assertEqual(self.sent[-1]['processing_state'], 'resolved')
+            self.assertIn('standby', self.sent[-1]['summary'])
+            monitor.tick(lambda _: 'extension_disconnected', now=12)
+            self.assertEqual(self.sent[-1]['processing_state'], 'open')
+        finally:
+            monitor.close()
+        with self.assertRaises(ValueError):
+            Monitor(dict(self.config, demand_units={'unknown': 'wrong.service'}), self.client)
 
     def test_binding_changes_and_nonlocal_targets_refused(self):
         monitor=Monitor(self.config,self.client);monitor.close()
