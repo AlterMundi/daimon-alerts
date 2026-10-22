@@ -301,3 +301,21 @@ stop remains stopped. It never targets the production browser or another unit.
 The systemd effect uses `try-restart`, so a unit manually stopped between the
 active-state check and the repair request is not started again. Receiving
 qualification exercises this stop-during-probe race as well.
+
+
+## On-demand managed browser
+
+`service_monitor.py` accepts an optional `demand_units` object mapping an existing
+webbridge target ID to its receiving user service name. This observation policy
+does not change the target identity or replace the incident/outbox journal. An
+explicitly inactive/dead unit reports `standby`, separately from a running healthy
+browser. It can resolve an outage when the operator withdraws the live-service
+requirement; the resolution summary says standby. Failed, unknown and active but
+unresponsive states still alert. Existing bounded recovery never starts an
+inactive unit. No idle killer, model wakeup or automatic browser startup is added.
+
+Disable browser boot activation when selecting this policy. Agents start the
+configured browser unit for an actual task, wait for a functional connection,
+and close disposable owned tabs afterward. Stop the browser when no concurrent
+task, download, media or unfinished interaction needs it. Preserve its profile
+and reopen known pages on demand; never replay uncertain external actions.
