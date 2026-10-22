@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Finite critical-service observer. No models, page navigation or automatic repair."""
 import argparse
+import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -9,6 +10,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import stat
 import subprocess
 import time
 import urllib.parse
@@ -42,6 +44,33 @@ def read_json(url, payload=None):
 
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'enrollment_registry':
+        return target.get('_registry_state', 'observation_unreadable')
+    if target['kind'] == 'incus_native':
+        # Instance names come only from the operator-owned enrollment registry.
+        # No command, home, credential or executable is supplied by its records.
+        prefix = [target['incus_binary'], 'exec', target['instance'], '--']
+        try:
+            try:
+                state = subprocess.run(prefix + ['systemctl', 'show',
+                    'daimon-onboarding-codex.service', '-p', 'NRestarts', '--value'],
+                    capture_output=True, text=True, timeout=15)
+                if state.returncode == 0:
+                    target['_counters'] = {'restarts': int(state.stdout.strip())}
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass
+            result = subprocess.run(prefix + ['runuser', '-u', 'agent', '--', 'env',
+                'HOME=/home/agent', 'CODEX_HOME=/home/agent/.codex',
+                '/usr/local/bin/codex', 'app-server', 'daemon', 'version'],
+                capture_output=True, text=True, timeout=15)
+            if result.returncode:
+                return 'native_unresponsive'
+            value = json.loads(result.stdout)
+            if value.get('status') == 'running' and isinstance(value.get('appServerVersion'), str):
+                return 'healthy' if '_counters' in target else 'observation_unreadable'
+            return 'native_unresponsive'
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+            return 'native_unresponsive'
     if target['kind'] == 'native_codex':
         try:
             command = ['systemctl'] + (['--user'] if target.get('scope') == 'user' else [])
@@ -138,7 +167,7 @@ def probe(target):
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'observation_unreadable', 'daemon_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
-           'memory_reclaim_pressure', 'native_restarted', 'memory_oom'}
+           'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
 
 
 class Monitor:
@@ -161,6 +190,11 @@ class Monitor:
                 if (not Path(target['cgroup_root']).is_absolute()
                         or not 0 < target['full_avg60_percent'] <= 100):
                     raise ValueError('explicit cgroup and bounded stall threshold required')
+            elif target['kind'] == 'enrollment_registry':
+                if (not Path(target['registry']).is_absolute()
+                        or not Path(target['incus_binary']).is_absolute()
+                        or not 0 < target['full_avg60_percent'] <= 100):
+                    raise ValueError('explicit enrollment registry and Incus required')
             elif target['kind'] == 'unit':
                 if target.get('scope', 'user') not in ('user', 'system'):
                     raise ValueError('explicit user/system unit scope required')
@@ -247,7 +281,7 @@ class Monitor:
                              else 'service_unavailable'),
                          severity=severity, processing_state='open', summary=summary,
                          action=('Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
-                                 if target['kind'] in ('native_codex', 'cgroup_memory') else
+                                 if target['kind'] in ('native_codex', 'incus_native', 'cgroup_memory') else
                                  'Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.'),
                          source_at=now, updated_at=now, work_preserved=True)
         raw = json.dumps(value, sort_keys=True)
@@ -256,6 +290,7 @@ class Monitor:
             self.db.execute('INSERT INTO outbox(content) VALUES(?)', (raw,))
 
     def tick(self, check=probe, now=None):
+        live_clock = now is None
         now = int(time.time()) if now is None else now
         available = True
         try:
@@ -263,15 +298,59 @@ class Monitor:
         except Unavailable:
             available = False
         rows = []
+        targets = []
         for target in self.config['targets']:
-            counters = None
+            if target['kind'] != 'enrollment_registry':
+                targets.append(target)
+                continue
+            registry = dict(target, _registry_state='healthy')
             try:
-                selected = dict(target)
-                demand_unit = self.config.get('demand_units', {}).get(target['id'])
-                if demand_unit:
-                    selected['demand_unit'] = demand_unit
-                reason = check(selected)
-                counters = selected.get('_counters')
+                targets.extend(enrollments(target))
+                if any(Path(target['registry']).glob('.failure-*')):
+                    registry['_registry_state'] = 'enrollment_unavailable'
+            except (OSError, ValueError, KeyError, TypeError):
+                registry['_registry_state'] = 'observation_unreadable'
+            targets.append(registry)
+        # Probe independent hosted bodies concurrently, with a fixed upper bound.
+        # SQLite/counter/incident changes remain serialized in the existing tick.
+        def observe(target):
+            selected = dict(target)
+            demand_unit = self.config.get('demand_units', {}).get(target['id'])
+            if demand_unit:
+                selected['demand_unit'] = demand_unit
+            try:
+                return check(selected), selected.get('_counters')
+            except Exception:
+                return 'observation_unreadable', None
+        def observations():
+            nonlocal available
+            native = [t for t in targets if t['kind'] == 'incus_native']
+            for target in targets:
+                if target['kind'] != 'incus_native':
+                    yield target, observe(target)
+            if not native:
+                return
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                pending = {pool.submit(observe, t): t for t in native}
+                heartbeat_at = time.monotonic() + 10
+                while pending:
+                    done, _ = concurrent.futures.wait(pending,
+                        timeout=max(0, heartbeat_at - time.monotonic()),
+                        return_when=concurrent.futures.FIRST_COMPLETED)
+                    if time.monotonic() >= heartbeat_at:
+                        if available:
+                            try:
+                                self.client.call('PUT', '/v1/observers/' + self.config['observer_id'],
+                                    dict(receiving_scope=self.config['receiving_scope'],
+                                         source_at=int(time.time()) if live_clock else now,
+                                         source_state='observation_unreadable'))
+                            except Unavailable:
+                                available = False
+                        heartbeat_at = time.monotonic() + 10
+                    for future in done:
+                        yield pending.pop(future), future.result()
+        for target, (reason, counters) in observations():
+            try:
                 if counters is not None:
                     prior = self.db.execute('SELECT content FROM runtime_counters WHERE id=?',
                                             (target['id'],)).fetchone()
@@ -289,18 +368,24 @@ class Monitor:
             # Do not mutate uncertain revisions while acceptance is pending.
             if available:
                 # Unknown observation never resolves a retained outage.
-                self.transition(target, reason, now)
+                self.transition(target, reason, int(time.time()) if live_clock else now)
                 # Retain the incident/outbox before consuming the counter edge.
                 # Service outage or a crash must not erase an observed restart.
                 if counters is not None:
                     with self.db:
                         self.db.execute('INSERT OR REPLACE INTO runtime_counters VALUES(?,?)',
                                         (target['id'],json.dumps(counters)))
+                # Do not hold a fast body's incident behind another guest's
+                # slow control RPC. Acceptance/outbox retain their normal rules.
+                try:
+                    self.flush()
+                except Unavailable:
+                    available = False
         if available:
             try:
                 self.flush()
                 self.client.call('PUT', '/v1/observers/' + self.config['observer_id'],
-                                 dict(receiving_scope=self.config['receiving_scope'], source_at=now,
+                                 dict(receiving_scope=self.config['receiving_scope'], source_at=int(time.time()) if live_clock else now,
                                       source_state='healthy' if all(r['state'] != 'observation_unreadable' for r in rows) else 'observation_unreadable'))
             except Unavailable:
                 available = False
@@ -309,6 +394,42 @@ class Monitor:
             self.db.execute('DELETE FROM status')
             self.db.execute('INSERT INTO status VALUES(?)', (json.dumps(result),))
         return result
+
+
+def enrollments(target):
+    """Expand one fixed operator registry, without rebinding retained incidents."""
+    root = Path(target['registry'])
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError('private receiving registry required')
+    files = sorted(root.glob('*.json'))
+    if len(files) > 16:
+        raise ValueError('bounded hosted resource registry required')
+    targets = []
+    for path in files:
+        record = json.loads(private_text(path, 4096))
+        if set(record) != {'schema','name','instance','resource_ref','plan_digest'}:
+            raise ValueError('closed enrollment record required')
+        name = record['name']; identifier(name)
+        instance = 'dm-' + name
+        if (record['schema'] != 'cluster-runtime-health-enrollment/v1'
+                or record['instance'] != instance or path.name != name + '.json'
+                or record['resource_ref'] != 'container-' + instance
+                or not isinstance(record['plan_digest'], str)
+                or not re.fullmatch('[0-9a-f]{64}', record['plan_digest'])):
+            raise ValueError('qualified receiving enrollment required')
+        resource = record['resource_ref']; identifier(resource)
+        for suffix in ('native','memory'):
+            item = dict(id=name+'-'+suffix, resource_ref=resource)
+            identifier(item['id'])
+            if suffix == 'native':
+                item.update(kind='incus_native', instance=instance, incus_binary=target['incus_binary'])
+            else:
+                item.update(kind='cgroup_memory',
+                    cgroup_root='/sys/fs/cgroup/lxc.payload.'+instance,
+                    full_avg60_percent=target['full_avg60_percent'])
+            targets.append(item)
+    return targets
 
 
 def main():

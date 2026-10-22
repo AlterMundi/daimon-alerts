@@ -57,3 +57,29 @@ waits for actual core readiness under one bounded30-second deadline and terminat
 its own fixture on failure; it does not impose an accidental3-second cold-disk
 performance requirement. CI scopes this adapter-only change to those contracts
 and the actual core needed by the HTTP fixture; unknown/core changes keep full CI.
+
+
+## Hosted enrollment registries
+
+A host operator may configure one `kind: enrollment_registry` target with an
+absolute private `registry`, fixed absolute `incus_binary`, ordinary id/resource
+fields and positive `full_avg60_percent`. The observing UID owns the directory
+and private regular JSON entries. Closed `cluster-runtime-health-enrollment/v1`
+records contain only schema, name, instance, resource_ref and plan_digest.
+Instance is exactly `dm-<name>` and resource is `container-dm-<name>`; no command,
+home or credential comes from a record. The authorized Cluster job worker writes
+them after Telegram completion.
+
+New entries add resources without rebinding the journal. The writer atomically
+limits the registry to16entries. A `.failure-<name>` marker makes enrollment
+failure a durable incident without undoing accepted onboarding or prior coverage.
+Cgroup results publish before remote RPCs. At most four native probes run
+concurrently with separate15second restart-counter/version deadlines. Finished
+incidents flush immediately; pending batches send ten-second unreadable heartbeats
+until final observation. A full slow batch can take120seconds: use a180second
+service bound and core freshness at least25seconds. This is native/resource
+observation, not Matrix delivery or model availability.
+
+See Cluster's [hosted runtime runbook](https://github.com/nicoechaniz/daimon-cluster/blob/main/docs/operations/hosted-runtime-health.md)
+and [installer](https://github.com/nicoechaniz/daimon-cluster/blob/main/tools/install_host_runtime_health.py).
+The host keeps its own receiving route, and copies no guest credentials.
