@@ -39,6 +39,50 @@ class Runtime(unittest.TestCase):
             (root/'memory.events').unlink()
             self.assertEqual(probe(target),'observation_unreadable')
 
+    def test_memory_flapping_retains_incident_until_sustained_low_psi(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); client = Mock(); sent = []
+            def publish(method, path, value):
+                if '/incidents/' in path:
+                    sent.append(dict(value))
+                    return {k: value[k] for k in ('producer_id','incident_id','revision')}
+                return {}
+            client.call.side_effect = publish
+            config = dict(producer_id='runtime', observer_id='observer', receiving_scope='human',
+                          base_url='http://127.0.0.1:9', token_file=str(root/'token'),
+                          state_dir=str(root/'state'), targets=[dict(id='memory', resource_ref='body',
+                          kind='cgroup_memory', cgroup_root=str(root), full_avg60_percent=5)])
+            metric = [6]
+            def check(target):
+                target['_counters'] = {'oom_kill': 0, 'full_avg60_percent': metric[0]}
+                return 'memory_reclaim_pressure' if metric[0] >= 5 else 'healthy'
+            monitor = Monitor(config, client)
+            monitor.tick(check, now=100)
+            incident = sent[-1]['incident_id']
+            metric[0] = 4; monitor.tick(check, now=110)
+            metric[0] = 6; monitor.tick(check, now=120)
+            self.assertEqual(len(sent), 1)
+            metric[0] = 1; monitor.tick(check, now=130)
+            monitor.close()
+            monitor = Monitor(config, client)
+            try:
+                monitor.tick(check, now=190)  # Same retained recovery across restart.
+                self.assertEqual(len(sent), 1)
+                self.assertEqual(monitor.db.execute('SELECT since FROM memory_recovery').fetchone()[0], 130)
+                monitor.tick(lambda _: 'observation_unreadable', now=200)
+                metric[0] = 1
+                monitor.tick(check, now=210)
+                monitor.tick(check, now=310)  # Missing observations reset the window.
+                monitor.tick(check, now=370)
+                self.assertEqual(sent[-1]['processing_state'], 'open')
+                monitor.tick(check, now=430)
+                self.assertEqual(sent[-1]['incident_id'], incident)
+                self.assertEqual(sent[-1]['processing_state'], 'resolved')
+                metric[0] = 8; monitor.tick(check, now=440)
+                self.assertNotEqual(sent[-1]['incident_id'], incident)
+            finally:
+                monitor.close()
+
     def test_restart_edge_survives_monitor_restart_and_unavailable_delivery(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);client=Mock();sent=[]
@@ -114,10 +158,11 @@ class Runtime(unittest.TestCase):
                 (root/'memory.events').write_text('oom_kill 8\n');monitor.tick(now=101)
                 row=json.loads(monitor.db.execute('SELECT content FROM incidents').fetchone()[0])
                 self.assertIn('memory oom',row['summary'])
-                monitor.tick(now=102)
+                for sample in (102, 162, 222):
+                    monitor.tick(now=sample)
                 row=json.loads(monitor.db.execute('SELECT content FROM incidents').fetchone()[0])
                 self.assertEqual(row['processing_state'],'resolved')
-                monitor.tick(lambda _: (_ for _ in ()).throw(OSError()),now=103)
+                monitor.tick(lambda _: (_ for _ in ()).throw(OSError()),now=223)
                 row=json.loads(monitor.db.execute('SELECT content FROM incidents').fetchone()[0])
                 self.assertEqual(row['processing_state'],'open')
             finally:monitor.close()

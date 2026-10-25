@@ -106,6 +106,7 @@ def probe(target):
             stalled = float(full['avg60'])
             if not 0 <= stalled <= 100:
                 return 'observation_unreadable'
+            target['_counters']['full_avg60_percent'] = stalled
             return ('memory_reclaim_pressure' if stalled >= target['full_avg60_percent']
                     else 'healthy')
         except (OSError, ValueError, KeyError):
@@ -231,7 +232,8 @@ class Monitor:
                              'CREATE TABLE IF NOT EXISTS incidents(id TEXT PRIMARY KEY, content TEXT);'
                              'CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY, content TEXT);'
                              'CREATE TABLE IF NOT EXISTS runtime_counters(id TEXT PRIMARY KEY, content TEXT);'
-                             'CREATE TABLE IF NOT EXISTS status(value TEXT);')
+                             'CREATE TABLE IF NOT EXISTS status(value TEXT);'
+                             'CREATE TABLE IF NOT EXISTS memory_recovery(id TEXT PRIMARY KEY, since INTEGER, sampled INTEGER);')
         selection = {k: config[k] for k in ('producer_id', 'observer_id', 'receiving_scope', 'targets', 'base_url', 'token_file')}
         binding = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()
         prior = self.db.execute('SELECT value FROM binding').fetchone()
@@ -288,6 +290,32 @@ class Monitor:
         with self.db:
             self.db.execute('INSERT OR REPLACE INTO incidents VALUES(?,?)', (target['id'], raw))
             self.db.execute('INSERT INTO outbox(content) VALUES(?)', (raw,))
+
+    def memory_resolution_ready(self, target, reason, counters, now):
+        """Retain an open outage until lower PSI is sustained across real samples."""
+        if target['kind'] != 'cgroup_memory':
+            return True
+        prior = self.db.execute('SELECT content FROM incidents WHERE id=?',
+                                (target['id'],)).fetchone()
+        if not prior or json.loads(prior[0])['processing_state'] != 'open':
+            with self.db:
+                self.db.execute('DELETE FROM memory_recovery WHERE id=?', (target['id'],))
+            return True
+        stalled = (counters or {}).get('full_avg60_percent')
+        eligible = (reason == 'healthy' and isinstance(stalled, (int, float))
+                    and 0 <= stalled < target['full_avg60_percent'] / 2)
+        with self.db:
+            row = self.db.execute('SELECT since,sampled FROM memory_recovery WHERE id=?',
+                                  (target['id'],)).fetchone()
+            if not eligible:
+                self.db.execute('DELETE FROM memory_recovery WHERE id=?', (target['id'],))
+                return reason != 'healthy'
+            # A restart retains progress; an observation gap or clock reversal
+            # cannot masquerade as continuously observed recovery.
+            since = row[0] if row and 0 <= now - row[1] <= 90 else now
+            self.db.execute('INSERT OR REPLACE INTO memory_recovery VALUES(?,?,?)',
+                            (target['id'], since, now))
+        return now - since >= 120
 
     def tick(self, check=probe, now=None):
         live_clock = now is None
@@ -364,11 +392,15 @@ class Monitor:
                     reason = 'observation_unreadable'
             except Exception:
                 reason = 'observation_unreadable'
-            rows.append(dict(id=target['id'], state=reason))
+            observed_at = int(time.time()) if live_clock else now
+            resolution_ready = (self.memory_resolution_ready(target, reason, counters, observed_at)
+                                if available else True)
+            rows.append(dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending'))
             # Do not mutate uncertain revisions while acceptance is pending.
             if available:
                 # Unknown observation never resolves a retained outage.
-                self.transition(target, reason, int(time.time()) if live_clock else now)
+                if resolution_ready:
+                    self.transition(target, reason, observed_at)
                 # Retain the incident/outbox before consuming the counter edge.
                 # Service outage or a crash must not erase an observed restart.
                 if counters is not None:

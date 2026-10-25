@@ -25,9 +25,13 @@ not a60-second interval that becomes stale between healthy invocations. A bounde
 oneshot deadline selects technical observation only. Its persisted journal retains
 incident/revision/outbox and counter baselines across restarts. Counter edges are
 consumed only after the incident is durable; an unavailable service cannot erase
-an already-baselined OOM or restart. A later healthy native/control or memory
-observation resolves the incident, preserving its historical delivery and separate
-acknowledgment. Alert acceptance, Telegram acceptance and human reading differ.
+an already-baselined OOM or restart. A later healthy native/control observation resolves its incident. Memory
+recovery requires full PSI below half the opening threshold for at least120seconds
+of observed samples with no gap over90seconds. Threshold oscillation keeps the
+same incident open; unknown samples reset recovery. The recovery window survives
+observer restarts in the existing journal. Raw probe status remains separate from
+`recovery_pending`; no incident or delivery history is cleared. Preserve historical
+delivery and separate acknowledgment. Alert acceptance, Telegram acceptance and human reading differ.
 
 The maintained Cluster native supervisor owns automatic recovery of an actually
 departed daemon through the native idempotent Start. A timeout never establishes
