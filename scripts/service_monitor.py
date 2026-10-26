@@ -248,6 +248,67 @@ class Monitor:
     def close(self):
         self.db.close(); self.lock.close()
 
+    def retire_enrollment(self, name, now=None):
+        """Explicitly retire an old placement, not its work or another body."""
+        identifier(name)
+        registries = [t for t in self.config['targets'] if t['kind'] == 'enrollment_registry']
+        if len(registries) != 1:
+            raise ValueError('one explicit enrollment registry required')
+        target = registries[0]
+        root = Path(target['registry'])
+        # Reuse enrollment validation before touching the selected record.
+        enrollments(target)
+        now = int(time.time()) if now is None else now
+        with (root / 'lock').open('a+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            path = root / (name + '.json')
+            archive = root / (name + '.json.retired')
+            if path.exists():
+                if archive.exists():
+                    if private_text(path, 4096) != private_text(archive, 4096):
+                        raise ValueError('prior retirement requires explicit reconciliation')
+                    # A legacy enrollment reconciler can recreate its exact old
+                    # record. The durable retirement remains authoritative.
+                    path.unlink()
+                # Only this registry record leaves the active *.json selection.
+                # Archive first: after a crash the same command resumes resolution.
+                else:
+                    path.rename(archive)
+                fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            elif not archive.exists():
+                raise ValueError('selected enrollment does not exist')
+            # Do not supersede a pending/uncertain publication. Exact flush is
+            # idempotent; a service outage leaves the archive and outbox resumable.
+            self.flush()
+            resolved = []
+            with self.db:
+                for suffix in ('native', 'memory'):
+                    key = name + '-' + suffix
+                    prior = self.db.execute('SELECT content FROM incidents WHERE id=?', (key,)).fetchone()
+                    if not prior:
+                        continue
+                    value = json.loads(prior[0])
+                    if value['resource_ref'] != 'container-dm-' + name:
+                        raise ValueError('retirement cannot rebind incident provenance')
+                    if value['processing_state'] == 'resolved':
+                        continue
+                    value.update(revision=value['revision'] + 1,
+                                 updated_at=max(now, value['updated_at']),
+                                 processing_state='resolved', severity='info',
+                                 summary=key + ': old placement observation retired.',
+                                 action='This container enrollment was explicitly retired. This resolves its observation only; use the receiving host monitor for current health. Source work and incident history remain retained.')
+                    raw = json.dumps(value, sort_keys=True)
+                    self.db.execute('UPDATE incidents SET content=? WHERE id=?', (raw, key))
+                    self.db.execute('INSERT INTO outbox(content) VALUES(?)', (raw,))
+                    resolved.append(value['incident_id'])
+            self.flush()
+        return dict(retired_enrollment=name, resolved_incidents=resolved,
+                    source_work_recovered=False)
+
     def flush(self):
         for seq, raw in self.db.execute('SELECT seq,content FROM outbox ORDER BY seq').fetchall():
             value = json.loads(raw)
@@ -450,6 +511,11 @@ def enrollments(target):
                 or not isinstance(record['plan_digest'], str)
                 or not re.fullmatch('[0-9a-f]{64}', record['plan_digest'])):
             raise ValueError('qualified receiving enrollment required')
+        retired = path.with_name(path.name + '.retired')
+        if retired.exists():
+            if json.loads(private_text(retired, 4096)) != record:
+                raise ValueError('retired placement requires explicit reconciliation')
+            continue
         resource = record['resource_ref']; identifier(resource)
         for suffix in ('native','memory'):
             item = dict(id=name+'-'+suffix, resource_ref=resource)
@@ -467,12 +533,17 @@ def enrollments(target):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--retire-enrollment', metavar='NAME',
+                        help='Explicitly archive one old container enrollment and resolve only its observations')
     args = parser.parse_args()
     os.umask(0o077)
     monitor = None
     try:
         config = json.loads(private_text(args.config))
         monitor = Monitor(config)
+        if args.retire_enrollment:
+            print(json.dumps(monitor.retire_enrollment(args.retire_enrollment)))
+            return 0
         result = monitor.tick()
         print(json.dumps(result))
         return 0 if result['service_state'] == 'available' else 2

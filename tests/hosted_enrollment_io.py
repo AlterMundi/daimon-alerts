@@ -6,6 +6,46 @@ sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from service_monitor import Monitor, enrollments, probe, Unavailable
 
 class Hosted(unittest.TestCase):
+ def test_relocated_retirement_preserves_other_bodies_history_and_exact_uncertain_resolution(self):
+  with tempfile.TemporaryDirectory() as temporary:
+   root=Path(temporary);root.chmod(0o700);registry=root/'registry';registry.mkdir(mode=0o700)
+   for name in ('one','two'):
+    p=registry/(name+'.json');p.write_text(json.dumps(dict(schema='cluster-runtime-health-enrollment/v1',name=name,instance='dm-'+name,resource_ref='container-dm-'+name,plan_digest='a'*64)));p.chmod(0o600)
+   cfg=dict(producer_id='hosted',observer_id='observer',receiving_scope='operator',base_url='http://127.0.0.1:9',token_file=str(root/'token'),state_dir=str(root/'state'),targets=[dict(id='hosted',resource_ref='host',kind='enrollment_registry',registry=str(registry),incus_binary='/usr/bin/incus',full_avg60_percent=5)])
+   sent=[];client=Mock()
+   def accept(method,path,value):
+    if '/incidents/' in path:sent.append(dict(value));return {k:value[k] for k in ('producer_id','incident_id','revision')}
+    return {}
+   client.call.side_effect=accept;monitor=Monitor(cfg,client)
+   monitor.tick(lambda t:'native_unresponsive' if t['kind']=='incus_native' else 'healthy',now=100)
+   before=dict(monitor.db.execute('SELECT id,content FROM incidents').fetchall())
+   # A lost retirement response leaves exactly one pending resolution, archived
+   # enrollment and unchanged other body's incident. Restart retries that revision.
+   def uncertain(method,path,value):
+    if value.get('processing_state')=='resolved':raise Unavailable('lost reply')
+    return accept(method,path,value)
+   client.call.side_effect=uncertain
+   with self.assertRaises(Unavailable):monitor.retire_enrollment('one',now=101)
+   pending=monitor.db.execute('SELECT content FROM outbox').fetchone()[0]
+   self.assertEqual(json.loads(pending)['incident_id'],json.loads(before['one-native'])['incident_id'])
+   self.assertEqual(monitor.db.execute('SELECT content FROM incidents WHERE id="two-native"').fetchone()[0],before['two-native'])
+   self.assertTrue((registry/'one.json.retired').exists());self.assertFalse((registry/'one.json').exists())
+   monitor.close();client.call.side_effect=accept;monitor=Monitor(cfg,client)
+   try:
+    monitor.retire_enrollment('one',now=102)
+    self.assertEqual(sent[-1],json.loads(pending));self.assertIn('retired',sent[-1]['summary']);self.assertNotIn('healthy',sent[-1]['summary'])
+    count=len(sent)
+    # Old onboarding reconcilers must not resurrect a retired placement.
+    (registry/'one.json').write_bytes((registry/'one.json.retired').read_bytes());(registry/'one.json').chmod(0o600)
+    self.assertEqual({t['id'] for t in enrollments(cfg['targets'][0])},{'two-native','two-memory'})
+    monitor.retire_enrollment('one',now=103);self.assertEqual(len(sent),count);self.assertFalse((registry/'one.json').exists())
+    result=monitor.tick(lambda t:'native_unresponsive' if t['kind']=='incus_native' else 'healthy',now=104)
+    self.assertEqual({t['id'] for t in result['targets']},{'two-native','two-memory','hosted'})
+    self.assertEqual(monitor.db.execute('SELECT content FROM incidents WHERE id="two-native"').fetchone()[0],before['two-native'])
+    with self.assertRaises(ValueError):monitor.retire_enrollment('missing',now=105)
+    self.assertTrue((registry/'two.json').exists())
+   finally:monitor.close()
+
  def test_new_enrollment_after_monitor_start_and_existing_incident_survives_restart(self):
   with tempfile.TemporaryDirectory() as temporary:
    root=Path(temporary);root.chmod(0o700);registry=root/'registry';registry.mkdir(mode=0o700)

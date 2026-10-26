@@ -87,3 +87,21 @@ observation, not Matrix delivery or model availability.
 See Cluster's [hosted runtime runbook](https://github.com/nicoechaniz/daimon-cluster/blob/main/docs/operations/hosted-runtime-health.md)
 and [installer](https://github.com/nicoechaniz/daimon-cluster/blob/main/tools/install_host_runtime_health.py).
 The host keeps its own receiving route, and copies no guest credentials.
+
+## Relocating one hosted body
+
+After verifying the receiving host's actual native/runtime and memory observation,
+retire the old container enrollment with the same configured service monitor:
+`service_monitor.py --config PRIVATE_CONFIG --retire-enrollment NAME`.
+It acquires the existing monitor/registry locks, archives only `NAME.json` outside
+the active registry glob, and resolves only that container's retained runtime and
+memory observations with an explicit retirement summary. Other bodies continue to
+be observed. A busy lock requires waiting for that finite observation to complete;
+do not stop shared monitoring or a hosted runtime to obtain the lock.
+
+The same command resumes a partial retirement. Pending publications replay exactly;
+incident IDs, provenance, history, delivery receipts and source work are retained.
+Retirement does not certify the new host healthy or resolve capture/provider work.
+Keep native receiving observation and any independent external coverage distinct.
+Rollback retains the archived registry record; restore it only after explicitly
+returning the body to that container, with no duplicate active signed identity.
