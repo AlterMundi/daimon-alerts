@@ -18,6 +18,17 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_external_health_requires_actual_bounded_remote_response(self):
+        target = dict(kind='http_health', base_url='http://127.0.0.1:12345')
+        for value, expected in [({'ok': True}, 'healthy'), ({'ok': False}, 'health_unavailable'),
+                                ({'ok': 'true'}, 'health_unavailable'), ({}, 'health_unavailable')]:
+            with patch('service_monitor.read_json', return_value=value) as read:
+                self.assertEqual(probe(target), expected)
+                read.assert_called_once_with('http://127.0.0.1:12345/health')
+        for error in (OSError(), ValueError()):
+            with patch('service_monitor.read_json', side_effect=error):
+                self.assertEqual(probe(target), 'health_unavailable')
+
     def test_process_up_is_not_connected_or_operational(self):
         for status,expected in [({'running':False,'extension_connected':False},'daemon_unavailable'),
                                 ({'running':True,'extension_connected':False},'extension_disconnected'),

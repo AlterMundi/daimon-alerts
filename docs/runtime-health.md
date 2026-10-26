@@ -15,6 +15,13 @@ Add only explicitly selected targets to an owner-private observer config:
   and OOM-kill counter increases. A nearly full reclaimable cache without stalls
   does not establish exhaustion. Initial lifetime counters establish a baseline,
   not a fabricated recent failure. Missing observation stays actionable.
+- `kind: http_health` with an explicit loopback `base_url` checks the existing
+  `/health` endpoint through a configured remote-service forward. Only bounded
+  JSON with boolean `ok: true` proves availability. The route must actually reach
+  the receiving service; an active forwarding unit alone proves nothing. Failure
+  reports route/service unavailability without guessing whether the host, VPN or
+  application caused it. This is external endpoint coverage, separate from the
+  receiving host's native runtime/memory observations and provider acceptance.
 
 Run the finite observer as the same receiving service owner with its actual HOME
 and CODEX_HOME. Use a separately scoped publish/observe/status actor and existing
