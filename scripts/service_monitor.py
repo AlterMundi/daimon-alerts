@@ -44,6 +44,12 @@ def read_json(url, payload=None):
 
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'http_health':
+        try:
+            value = read_json(target['base_url'].rstrip('/') + '/health')
+            return 'healthy' if isinstance(value, dict) and value.get('ok') is True else 'health_unavailable'
+        except (OSError, ValueError, TypeError):
+            return 'health_unavailable'
     if target['kind'] == 'enrollment_registry':
         return target.get('_registry_state', 'observation_unreadable')
     if target['kind'] == 'incus_native':
@@ -166,7 +172,7 @@ def probe(target):
         return 'extension_unresponsive'
 
 
-REASONS = {'healthy', 'standby', 'unit_inactive', 'observation_unreadable', 'daemon_unavailable',
+REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observation_unreadable', 'daemon_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
            'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
 
@@ -180,7 +186,7 @@ class Monitor:
             raise ValueError('bounded unique target selection required')
         for target in targets:
             identifier(target['id']); identifier(target['resource_ref'])
-            if target['kind'] == 'webbridge':
+            if target['kind'] in ('webbridge', 'http_health'):
                 local_url(target['base_url'])
             elif target['kind'] == 'native_codex':
                 if (not Path(target['binary']).is_absolute()
