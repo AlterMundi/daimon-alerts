@@ -265,10 +265,15 @@ class Monitor:
             archive = root / (name + '.json.retired')
             if path.exists():
                 if archive.exists():
-                    raise ValueError('prior retirement requires explicit reconciliation')
+                    if private_text(path, 4096) != private_text(archive, 4096):
+                        raise ValueError('prior retirement requires explicit reconciliation')
+                    # A legacy enrollment reconciler can recreate its exact old
+                    # record. The durable retirement remains authoritative.
+                    path.unlink()
                 # Only this registry record leaves the active *.json selection.
                 # Archive first: after a crash the same command resumes resolution.
-                path.rename(archive)
+                else:
+                    path.rename(archive)
                 fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
                 try:
                     os.fsync(fd)
@@ -506,6 +511,11 @@ def enrollments(target):
                 or not isinstance(record['plan_digest'], str)
                 or not re.fullmatch('[0-9a-f]{64}', record['plan_digest'])):
             raise ValueError('qualified receiving enrollment required')
+        retired = path.with_name(path.name + '.retired')
+        if retired.exists():
+            if json.loads(private_text(retired, 4096)) != record:
+                raise ValueError('retired placement requires explicit reconciliation')
+            continue
         resource = record['resource_ref']; identifier(resource)
         for suffix in ('native','memory'):
             item = dict(id=name+'-'+suffix, resource_ref=resource)

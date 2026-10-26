@@ -34,7 +34,11 @@ class Hosted(unittest.TestCase):
    try:
     monitor.retire_enrollment('one',now=102)
     self.assertEqual(sent[-1],json.loads(pending));self.assertIn('retired',sent[-1]['summary']);self.assertNotIn('healthy',sent[-1]['summary'])
-    count=len(sent);monitor.retire_enrollment('one',now=103);self.assertEqual(len(sent),count)
+    count=len(sent)
+    # Old onboarding reconcilers must not resurrect a retired placement.
+    (registry/'one.json').write_bytes((registry/'one.json.retired').read_bytes());(registry/'one.json').chmod(0o600)
+    self.assertEqual({t['id'] for t in enrollments(cfg['targets'][0])},{'two-native','two-memory'})
+    monitor.retire_enrollment('one',now=103);self.assertEqual(len(sent),count);self.assertFalse((registry/'one.json').exists())
     result=monitor.tick(lambda t:'native_unresponsive' if t['kind']=='incus_native' else 'healthy',now=104)
     self.assertEqual({t['id'] for t in result['targets']},{'two-native','two-memory','hosted'})
     self.assertEqual(monitor.db.execute('SELECT content FROM incidents WHERE id="two-native"').fetchone()[0],before['two-native'])
