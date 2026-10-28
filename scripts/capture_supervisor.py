@@ -164,17 +164,26 @@ def prepare_input(args):
     return raw,event,source_ref,None
 
 def invoke(args):
+    entered=time.monotonic()
     root=directory(args.state_dir)
     raw,event,source_ref,error=prepare_input(args)
-    path,attempt=begin(root,args.binding_sha256,args.timeout_seconds,event=event,source_ref=source_ref)
+    # Codex runs terminal hooks synchronously and kills their process group at
+    # three seconds. Include input/intent overhead, and retain time to commit
+    # the failure receipt instead of advertising an impossible 30-second child.
+    terminal=event in {'SessionEnd','Interrupt'}
+    child_timeout=min(args.timeout_seconds,1.5) if terminal else args.timeout_seconds
+    path,attempt=begin(root,args.binding_sha256,child_timeout,event=event,source_ref=source_ref)
     output={};receipt_path=root/('.result-'+attempt['attempt_id']+'.json')
     try:
         if error:
             attempt.update(state='failed',reason=error);return finish(path,attempt)
         command=[sys.executable,'-B',str(Path(__file__).absolute()),'--child','--binding',args.binding,
                  '--binding-sha256',args.binding_sha256,'--handler-source',args.handler_source,'--child-receipt',str(receipt_path)]
+        remaining=min(child_timeout,2.5-(time.monotonic()-entered)) if terminal else child_timeout
+        if remaining<=0:
+            attempt.update(state='failed',reason='hook_timeout');return finish(path,attempt)
         try:
-            result=subprocess.run(command,input=raw,capture_output=True,timeout=args.timeout_seconds)
+            result=subprocess.run(command,input=raw,capture_output=True,timeout=remaining)
         except subprocess.TimeoutExpired:
             attempt.update(state='failed',reason='hook_timeout');return finish(path,attempt)
         if result.returncode:

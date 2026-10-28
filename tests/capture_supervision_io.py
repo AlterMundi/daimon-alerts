@@ -65,6 +65,33 @@ class CaptureSupervision(unittest.TestCase):
     def test_timeout_before_any_inbox(self):
         result=self.invoke(self.sleeping_handler(),.1);self.assertIn('hook_timeout',result['systemMessage'])
         self.assertFalse(self.inbox.exists());self.assertEqual(safe_projection(self.state,self.digest)['items'][0]['problem_code'],'timeout')
+    def test_terminal_capture_cannot_inherit_long_stop_child_budget(self):
+        self.payload['hook_event_name']='SessionEnd'
+        started=time.monotonic()
+        result=self.invoke(self.sleeping_handler(),30)
+        self.assertLess(time.monotonic()-started,2.9)
+        self.assertIn('hook_timeout',result['systemMessage'])
+        attempt=self.attempts()[0]
+        self.assertEqual(attempt['state'],'failed')
+        self.assertEqual(attempt['event'],'SessionEnd')
+        self.assertLessEqual(attempt['deadline_ns']-attempt['started_ns'],3_500_000_000)
+        self.assertFalse(self.inbox.exists())
+        self.assertFalse(safe_projection(self.state,self.digest)['items'][0]['work_preserved'])
+
+    def test_terminal_capture_preserves_exact_source_after_loss(self):
+        self.payload['hook_event_name']='SessionEnd';self.transcript_present()
+        original=self.transcript.read_bytes();started=time.monotonic()
+        self.assertEqual(self.invoke(timeout=1.5),{})
+        self.assertLess(time.monotonic()-started,2.9)
+        self.assertEqual(self.attempts()[0]['state'],'complete')
+        sys.path.insert(0,str(HMK/'scripts'))
+        from capture_inbox import Inbox
+        inbox=Inbox(self.inbox,self.binding)
+        with inbox.connect() as con:
+            revision=con.execute('select revision from heads where source=?',('fictional-session',)).fetchone()[0]
+        self.transcript.unlink()
+        self.assertEqual(inbox.restore(revision),original)
+
     def test_first_durable_intent_already_identifies_selected_source(self):
         self.transcript_present()
         program='''import os,signal,sys

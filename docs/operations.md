@@ -109,12 +109,28 @@ records only the selected binding; it does not certify capture or preserved work
 
 Supply `--binding`, exact file `--binding-sha256`, pinned `--handler-source`,
 private `--state-dir` and `--timeout-seconds`. Timeout must fit the native hook's
-deadline including wrapper startup, at most one second of input wait and durable writes. Qualify the actual receiving
-budget: a 1.5-second child bound failed on the real containers. The qualified
-2026-10-14 settings are Oliva child5/outer10 seconds for both events, Eko
-Stop15/30 and SessionEnd5/10; CompAII's existing setting remained sufficient.
-These are receiving observations, not a universal default. Native kill leaves a durable started intent;
-after its persisted deadline the independent observer reports uncertainty.
+deadline including wrapper startup, input wait and durable writes. Codex0.163.0
+(and the inspected selected source93e7cf5) caps SessionEnd/Interrupt at3seconds,
+default1second, and runs SessionEnd synchronously even when marked async. Stop
+has a separate budget. Do not apply Stop's30-second child/45-second outer budget
+to SessionEnd: Codex kills the supervisor first, hiding its child outcome.
+
+Configure SessionEnd outer3seconds and child1.5seconds. The supervisor also
+recognizes terminal payloads, caps their child at1.5seconds and reduces the
+remaining budget by input/intent elapsed time, reserving0.5seconds before Codex's
+hard cap for final receipt/cleanup. Stop budgets remain unchanged. This is not a
+hard filesystem latency guarantee: startup, lock wait or fsync can still exhaust
+the native deadline. Verify a real native SessionEnd, exact source reconstruction
+and a deliberately slow child. A zero exit or absence of warnings is insufficient.
+
+The2026-10-14 container observations (outer10seconds for SessionEnd) are historical,
+not compatible settings for this selected Codex. They do not establish current
+receiving acceptance on other hosts. Native kill leaves a durable started intent
+only if that write completed; after its deadline the observer reports uncertainty.
+An attempt retains identity, not transcript bytes. Failed capture must remain
+visible and recover explicitly through the original bound source and native DMK
+APIs; do not claim preservation, silently skip bytes, launch detached recovery or
+replay human/model input. Stop capture remains installed and independent.
 Failed/unknown attempts are retained. The128-attempt ledger prunes terminal
 success/skip entries; resolved failures remain at least24hours. Admission cannot
 silently discard unresolved gaps. Missing/unreadable supervision remains explicit.
@@ -208,114 +224,3 @@ observation before Python starts or before the first durable write, and cannot
 retroactively identify legacy attempts that lack metadata. The bounded input
 failure retains `input_timeout`; deploy the compatible observer reader with the
 wrapper. Source text and raw event payload remain absent from the attempt ledger.
-
-## Critical service capability observation
-
-`scripts/service_monitor.py --config PRIVATE_CONFIG` is a finite standard-library
-adapter for the existing core, Telegram receiver and Sessions attention trail.
-It runs no models, loads no private browser cookies, navigates no pages, and
-performs no automatic repair or native-goal operation.
-
-The private configuration selects `base_url`, `token_file`, `state_dir`,
-`producer_id`, `observer_id`, `receiving_scope` and one to 16 explicit `targets`.
-Each target has opaque `id`, `resource_ref` and either:
-
-- `kind: "webbridge"`, `base_url: "http://127.0.0.1:PORT"`: checks the daemon's
-  running flag, the extension connection and an actual extension `list_tabs`
-  roundtrip under one fixed health session. All returned tab data is discarded.
-  The observer never stores URLs, page contents or authentication state.
-- `kind: "unit"`, `unit: "example.service"`, optional `scope: "user"` or
-  `"system"`: checks the explicitly selected unit's LoadState and ActiveState. This proves process supervision only; it is
-  not a functional application check. Add a qualified capability probe when one
-  is required rather than calling every running process healthy.
-
-Endpoint requests are loopback-only, proxy-free, redirect-free, bounded to 64 KiB
-and three seconds each. Configuration and projected incidents retain no response
-bodies, exception messages or private paths. Failures distinguish daemon absence,
-extension disconnection, failed extension operation, inactive unit and unreadable
-observation. An unreadable observation does not resolve an existing outage.
-Only a successful new probe resolves that incident at a higher revision.
-A later recurrence has a new incident ID. Repeated unchanged failures do not
-produce new incidents. Delivery remains the existing receiving adapter's job.
-
-Each run holds an exclusive lock. Projections are journaled before publication;
-uncertain acceptance is retried with exactly the retained bytes/revision before
-new observations can change the projection. Keep this journal through rollback.
-An independent core freshness registration makes a missing monitor actionable.
-Grant only publish/observe/status to this producer and observer in its actual
-receiving scope. New grants require an Alerts-only restart; never stop the
-native harness or Telegram listener for it.
-
-An optional user timer should use a cadence fitting its probe count and timeout
-within the core freshness window. For two selected services, 30-second cadence,
-30-second oneshot limit and 128 MiB memory cap are adequate; check actual completed
-invocations and retained status. No timer or broader service classification is
-installed just by reading this document.
-
-Kimi's daemon, isolated browser and virtual display should use the existing
-operator-selected profile/extension with service supervision and bounded resource
-use. A healthy daemon with no browser extension is a capability outage. Successful
-browser automation still does not prove a platform grants source access: YouTube
-may independently require sign-in. Preserve those separate diagnoses.
-
-
-## Explicit managed-browser functional recovery
-
-Process restart policies do not detect a dead extension while Chromium's main
-process stays alive. `scripts/browser_watchdog.py --config PRIVATE_CONFIG` is an
-optional, separately authorized finite controller reusing the same `probe` as
-service observation. It publishes no incidents and acknowledges none; the Alerts
-observer remains responsible for fresh functional truth and resolution delivery.
-Reading this documentation or installing the script enables no service.
-
-The private JSON configuration selects `base_url` (loopback only), `state_dir`
-and the explicit user-service names `browser_unit`, `daemon_unit`, `display_unit`.
-A 30-second systemd timer can invoke a oneshot with TimeoutStartSec60, MemoryMax128M,
-TasksMax32 and UMask0077. The three managed services retain normal systemd exit
-restart supervision. Match browser TasksMax to actual Chromium process/thread
-use; an exhausted pids limit can kill the extension without killing the browser.
-Inspect pids.events and actual errors before calling a failure an OOM.
-
-The watchdog observes all three units before checking capability. An inactive or
-failed prerequisite prevents automatic recovery, preserving manual stops and
-systemd restart limits. Unknown observations do not trigger restarts. Two failed
-samples at least ten seconds apart are required. Daemon-unavailable restarts only
-the selected daemon; extension-disconnected/unresponsive restarts only the selected
-browser. Profile/custody is retained, but browser restarts can interrupt open tabs;
-no request, page action, model, sensor, goal or uncertain task is replayed.
-
-Durable locked state records an attempt before invoking systemctl. An uncertain
-acknowledgment consumes the same recovery budget: at most one restart per five
-minutes and three in any hour. A healthy probe clears the consecutive-failure
-counter, not the rate-limit history. Restart acceptance never claims functional
-recovery: the next actual probe must succeed. Repeated failure remains actionable
-through the existing service incident. Rollback disables only this watchdog timer
-and retains its state and Alerts journal; do not restore old journals.
-
-`python tests/browser_watchdog_io.py` checks failure confirmation, manual stops,
-unknown observations, exact unit selection, durable uncertain intent and budgets.
-Set `ALERTS_TEST_USER_SYSTEMD=1` only for explicit receiving qualification: its
-transient fixture sleep service proves a real restart changes MainPID and a manual
-stop remains stopped. It never targets the production browser or another unit.
-
-The systemd effect uses `try-restart`, so a unit manually stopped between the
-active-state check and the repair request is not started again. Receiving
-qualification exercises this stop-during-probe race as well.
-
-
-## On-demand managed browser
-
-`service_monitor.py` accepts an optional `demand_units` object mapping an existing
-webbridge target ID to its receiving user service name. This observation policy
-does not change the target identity or replace the incident/outbox journal. An
-explicitly inactive/dead unit reports `standby`, separately from a running healthy
-browser. It can resolve an outage when the operator withdraws the live-service
-requirement; the resolution summary says standby. Failed, unknown and active but
-unresponsive states still alert. Existing bounded recovery never starts an
-inactive unit. No idle killer, model wakeup or automatic browser startup is added.
-
-Disable browser boot activation when selecting this policy. Agents start the
-configured browser unit for an actual task, wait for a functional connection,
-and close disposable owned tabs afterward. Stop the browser when no concurrent
-task, download, media or unfinished interaction needs it. Preserve its profile
-and reopen known pages on demand; never replay uncertain external actions.
