@@ -6,6 +6,41 @@ sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from service_monitor import Monitor, enrollments, probe, Unavailable
 
 class Hosted(unittest.TestCase):
+ def test_remote_availability_preserves_old_retirement_and_journal_without_guest_credentials(self):
+  with tempfile.TemporaryDirectory() as temporary:
+   root=Path(temporary);root.chmod(0o700)
+   local=dict(schema='cluster-runtime-health-enrollment/v1',name='one',instance='dm-one',resource_ref='container-dm-one',plan_digest='a'*64)
+   retired=root/'one.json.retired';retired.write_text(json.dumps(local));retired.chmod(0o600)
+   remote=dict(schema='cluster-runtime-health-remote/v1',name='one',resource_ref='vm-one',plan_digest='a'*64,base_url='http://127.0.0.1:18797')
+   path=root/'remote-one.json';path.write_text(json.dumps(remote));path.chmod(0o600)
+   target=dict(registry=str(root),incus_binary='/usr/bin/incus',full_avg60_percent=5)
+   self.assertEqual(enrollments(target),[dict(id='one-availability',resource_ref='vm-one',kind='http_health',base_url=remote['base_url'])])
+   for bad in (dict(remote,base_url='http://remote.example'),dict(remote,command='bad'),dict(remote,name='../foreign')):
+    path.write_text(json.dumps(bad))
+    with self.assertRaises(ValueError):enrollments(target)
+   path.write_text(json.dumps(remote))
+   client=Mock();sent=[]
+   def accept(method,url,value):
+    if '/incidents/' in url:sent.append(dict(value));return {k:value[k] for k in ('producer_id','incident_id','revision')}
+    return {}
+   client.call.side_effect=accept
+   cfg=dict(producer_id='hosted',observer_id='observer',receiving_scope='operator',base_url='http://127.0.0.1:9',token_file=str(root/'token'),state_dir=str(root/'state'),targets=[dict(target,id='hosted',resource_ref='host',kind='enrollment_registry')])
+   monitor=Monitor(cfg,client)
+   try:
+    monitor.tick(lambda t:'health_unavailable' if t['kind']=='http_health' else 'healthy',now=10)
+    original=sent[-1]['incident_id'];monitor.tick(lambda t:'healthy',now=11)
+    self.assertEqual(sent[-1]['incident_id'],original);self.assertEqual(sent[-1]['processing_state'],'resolved')
+    self.assertEqual(sent[-1]['resource_ref'],'vm-one')
+    monitor.tick(lambda t:'health_unavailable' if t['kind']=='http_health' else 'healthy',now=12)
+    retained=sent[-1]['incident_id']
+    monitor.retire_enrollment('one',now=13,remote=True)
+    self.assertEqual(sent[-1]['incident_id'],retained)
+    self.assertEqual(sent[-1]['processing_state'],'resolved')
+    self.assertEqual(enrollments(target),[])
+    path.write_bytes((root/'remote-one.json.retired').read_bytes());path.chmod(0o600)
+    self.assertEqual(enrollments(target),[])
+   finally:monitor.close()
+
  def test_relocated_retirement_preserves_other_bodies_history_and_exact_uncertain_resolution(self):
   with tempfile.TemporaryDirectory() as temporary:
    root=Path(temporary);root.chmod(0o700);registry=root/'registry';registry.mkdir(mode=0o700)

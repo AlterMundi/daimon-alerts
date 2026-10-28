@@ -151,3 +151,19 @@ explicit transition after fencing the newer writer, preserving newer journals an
 accepted revisions. The local audit retains the latest32 placement/counter records;
 it never deletes incident projections or pending publications. Alerts core history
 and its independent configured retention remain unchanged.
+
+### Independent availability after relocation
+
+The same private operator registry also accepts `remote-NAME.json` with closed
+schema `cluster-runtime-health-remote/v1`, `name`, `resource_ref`, retained
+`plan_digest` and loopback `base_url`. It adds `NAME-availability` HTTP health
+observation through the existing selected forward without changing observer
+authority or journal binding. Verify that the forward actually reaches the new
+body before selecting the record. This requires no guest credential and does not
+revive an archived local-container enrollment. Endpoint availability is distinct
+from the body's local native/global-memory monitor and provider acceptance.
+Non-loopback URLs and extra executable fields are rejected. An open incident
+cannot be rebound to another resource; retire its original observation explicitly.
+Use `--config PRIVATE_CONFIG --retire-remote NAME` for that retirement. It archives
+only the selected remote record, flushes exact pending publications and resolves
+its existing availability incident without certifying a replacement healthy.

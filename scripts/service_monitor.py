@@ -347,7 +347,7 @@ class Monitor:
     def close(self):
         self.db.close(); self.lock.close()
 
-    def retire_enrollment(self, name, now=None):
+    def retire_enrollment(self, name, now=None, *, remote=False):
         """Explicitly retire an old placement, not its work or another body."""
         identifier(name)
         registries = [t for t in self.config['targets'] if t['kind'] == 'enrollment_registry']
@@ -360,8 +360,9 @@ class Monitor:
         now = int(time.time()) if now is None else now
         with (root / 'lock').open('a+b') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            path = root / (name + '.json')
-            archive = root / (name + '.json.retired')
+            filename = ('remote-' if remote else '') + name + '.json'
+            path = root / filename
+            archive = root / (filename + '.retired')
             if path.exists():
                 if archive.exists():
                     if private_text(path, 4096) != private_text(archive, 4096):
@@ -380,18 +381,20 @@ class Monitor:
                     os.close(fd)
             elif not archive.exists():
                 raise ValueError('selected enrollment does not exist')
+            expected_resource = (json.loads(private_text(archive,4096))['resource_ref']
+                                 if remote else 'container-dm-'+name)
             # Do not supersede a pending/uncertain publication. Exact flush is
             # idempotent; a service outage leaves the archive and outbox resumable.
             self.flush()
             resolved = []
             with self.db:
-                for suffix in ('native', 'memory'):
+                for suffix in (('availability',) if remote else ('native', 'memory')):
                     key = name + '-' + suffix
                     prior = self.db.execute('SELECT content FROM incidents WHERE id=?', (key,)).fetchone()
                     if not prior:
                         continue
                     value = json.loads(prior[0])
-                    if value['resource_ref'] != 'container-dm-' + name:
+                    if value['resource_ref'] != expected_resource:
                         raise ValueError('retirement cannot rebind incident provenance')
                     if value['processing_state'] == 'resolved':
                         continue
@@ -399,13 +402,13 @@ class Monitor:
                                  updated_at=max(now, value['updated_at']),
                                  processing_state='resolved', severity='info',
                                  summary=key + ': old placement observation retired.',
-                                 action='This container enrollment was explicitly retired. This resolves its observation only; use the receiving host monitor for current health. Source work and incident history remain retained.')
+                                 action='This placement observation was explicitly retired. This resolves its observation only; use the receiving host monitor for current health. Source work and incident history remain retained.')
                     raw = json.dumps(value, sort_keys=True)
                     self.db.execute('UPDATE incidents SET content=? WHERE id=?', (raw, key))
                     self.db.execute('INSERT INTO outbox(content) VALUES(?)', (raw,))
                     resolved.append(value['incident_id'])
             self.flush()
-        return dict(retired_enrollment=name, resolved_incidents=resolved,
+        return dict(**{('retired_remote' if remote else 'retired_enrollment'):name}, resolved_incidents=resolved,
                     source_work_recovered=False)
 
     def flush(self):
@@ -423,6 +426,8 @@ class Monitor:
             raise ValueError('unsafe probe result')
         prior = self.db.execute('SELECT content FROM incidents WHERE id=?', (target['id'],)).fetchone()
         prior = json.loads(prior[0]) if prior else None
+        if prior and prior['processing_state'] == 'open' and prior['resource_ref'] != target['resource_ref']:
+            raise ValueError('changed resource requires explicit observation retirement')
         active = reason not in ('healthy', 'standby')
         if not active and (not prior or prior['processing_state'] == 'resolved'):
             return
@@ -600,6 +605,22 @@ def enrollments(target):
     targets = []
     for path in files:
         record = json.loads(private_text(path, 4096))
+        if record.get('schema') == 'cluster-runtime-health-remote/v1':
+            if set(record) != {'schema','name','resource_ref','plan_digest','base_url'}:
+                raise ValueError('closed remote observation record required')
+            name = record['name']; identifier(name); identifier(record['resource_ref'])
+            if (path.name != 'remote-'+name+'.json' or not isinstance(record['plan_digest'],str)
+                    or not re.fullmatch('[0-9a-f]{64}',record['plan_digest'])):
+                raise ValueError('qualified remote observation required')
+            local_url(record['base_url'])
+            retired=path.with_name(path.name+'.retired')
+            if retired.exists():
+                if json.loads(private_text(retired,4096)) != record:
+                    raise ValueError('retired remote observation requires explicit reconciliation')
+                continue
+            targets.append(dict(id=name+'-availability',resource_ref=record['resource_ref'],
+                                kind='http_health',base_url=record['base_url']))
+            continue
         if set(record) != {'schema','name','instance','resource_ref','plan_digest'}:
             raise ValueError('closed enrollment record required')
         name = record['name']; identifier(name)
@@ -659,6 +680,8 @@ def main():
                         help='Explicitly archive one old container enrollment and resolve only its observations')
     action.add_argument('--relocate-to', type=Path, metavar='PRIVATE_CONFIG',
                         help='Explicitly reconcile changed physical targets, preserving the existing journal and authority')
+    action.add_argument('--retire-remote',metavar='NAME',
+                        help='Retire one remote availability record, preserving exact pending publications')
     args = parser.parse_args()
     os.umask(0o077)
     monitor = None
@@ -668,6 +691,9 @@ def main():
             print(json.dumps(relocate_monitor(config, json.loads(private_text(args.relocate_to)))))
             return 0
         monitor = Monitor(config)
+        if args.retire_remote:
+            print(json.dumps(monitor.retire_enrollment(args.retire_remote,remote=True)))
+            return 0
         if args.retire_enrollment:
             print(json.dumps(monitor.retire_enrollment(args.retire_enrollment)))
             return 0
