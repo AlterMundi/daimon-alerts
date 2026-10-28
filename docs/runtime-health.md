@@ -112,3 +112,36 @@ Retirement does not certify the new host healthy or resolve capture/provider wor
 Keep native receiving observation and any independent external coverage distinct.
 Rollback retains the archived registry record; restore it only after explicitly
 returning the body to that container, with no duplicate active signed identity.
+
+### Move a retained local observer to a different physical boundary
+
+A VM is not a container cgroup. Inspect the actual receiving files as the service
+user: a full-OS VM root often exposes PSI but no `memory.current`, `memory.max`
+or `memory.events`. For system services, its real `system.slice` can provide the
+native-work cgroup observation; it does not cover work in other slices or replace
+independent parent-host/whole-VM monitoring. Keep that coverage distinction explicit.
+
+After fencing the old observer/writers and transferring their coherent journal,
+prepare a private receiving config with the actual targets and run the selected
+monitor as its existing owner:
+`service_monitor.py --config OLD_PRIVATE_CONFIG --relocate-to NEW_PRIVATE_CONFIG`.
+Keep both files until adoption/rollback is settled. This operation permits target
+location changes only: producer, observer, grants/token reference, scope, service
+endpoint and state directory remain unchanged, as do target IDs and probe kinds.
+Hosted registries use their separate enrollment retirement control above.
+
+The command first flushes exact retained publications, resolves only changed
+targets' old observations with an explicit retirement summary, and waits for their
+acceptance. It then atomically records the placement transition and resets only
+those targets' counter/recovery baselines. Prior incidents and original counters
+remain attributable; retirement never claims the receiving resource is healthy or
+source work recovered. Ordinary starts still refuse an unexplained binding change.
+Do not delete/recreate the journal to bypass that check. Retrying the same two
+configs after a lost reply observes the retained transition without a new effect.
+
+Select the receiving config for normal observation only after that operation;
+verify an actual native/control and memory sample. A rollback performs the reverse
+explicit transition after fencing the newer writer, preserving newer journals and
+accepted revisions. The local audit retains the latest32 placement/counter records;
+it never deletes incident projections or pending publications. Alerts core history
+and its independent configured retention remain unchanged.

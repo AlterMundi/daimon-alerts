@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from client import Unavailable
-from service_monitor import Monitor, probe
+from service_monitor import Monitor, probe, relocate_monitor, binding_digest
 
 
 def configuration(path):
@@ -145,6 +145,84 @@ class Durable(unittest.TestCase):
         changed={**self.config,'producer_id':'another-producer'}
         with self.assertRaises(ValueError):Monitor(changed,self.client)
 
+    def test_relocation_preserves_incident_history_and_restarts_only_changed_baselines(self):
+        memory = dict(id='memory', resource_ref='old-body', kind='cgroup_memory',
+                      cgroup_root='/old-cgroup', full_avg60_percent=5)
+        cfg = dict(self.config, targets=[memory, *self.config['targets']])
+        monitor = Monitor(cfg,self.client)
+        monitor.tick(lambda _: 'observation_unreadable',now=10)
+        first = {v['resource_ref']:v['incident_id'] for v in self.sent}
+        with monitor.db:
+            for key in ('memory','browser'):
+                monitor.db.execute('INSERT INTO runtime_counters VALUES(?,?)',(key,'{"oom_kill":7}'))
+        monitor.close()
+        new = dict(cfg, targets=[dict(memory,resource_ref='receiving-vm',cgroup_root='/new-cgroup'),cfg['targets'][1]])
+        result = relocate_monitor(cfg,new,self.client,now=11)
+        self.assertEqual(result['relocated_targets'],['memory'])
+        self.assertFalse(result['receiving_health_verified'])
+        retired = self.sent[-1]
+        self.assertEqual((retired['incident_id'],retired['resource_ref'],retired['processing_state']),
+                         (first['old-body'],'old-body','resolved'))
+        monitor = Monitor(new,self.client)
+        try:
+            self.assertEqual(monitor.db.execute('SELECT id FROM runtime_counters').fetchall(),[('browser',)])
+            retained=json.loads(monitor.db.execute('SELECT content FROM relocations').fetchone()[0])
+            self.assertEqual(retained['previous_counters']['memory']['oom_kill'],7)
+            monitor.tick(lambda _: 'observation_unreadable',now=12)
+            fresh = next(v for v in reversed(self.sent) if v['resource_ref']=='receiving-vm')
+            self.assertNotEqual(fresh['incident_id'],first['old-body'])
+        finally:monitor.close()
+        count=len(self.sent)
+        self.assertTrue(relocate_monitor(cfg,new,self.client)['already_relocated'])
+        self.assertEqual(len(self.sent),count)
+
+    def test_relocation_replays_exact_uncertain_resolution_before_binding_switch(self):
+        monitor=Monitor(self.config,self.client)
+        monitor.tick(lambda _: 'extension_disconnected',now=10);monitor.close()
+        new=dict(self.config,targets=[dict(self.config['targets'][0],resource_ref='receiving-browser')])
+        self.client.call.side_effect=Unavailable()
+        with self.assertRaises(Unavailable):relocate_monitor(self.config,new,self.client,now=11)
+        monitor=Monitor(self.config,self.client)
+        queued=monitor.db.execute('SELECT content FROM outbox').fetchone()[0];monitor.close()
+        self.assertEqual(json.loads(queued)['processing_state'],'resolved')
+        calls=[]
+        def accept(method,path,value):
+            calls.append(value);return {k:value[k] for k in ('producer_id','incident_id','revision')}
+        self.client.call.side_effect=accept
+        relocate_monitor(self.config,new,self.client,now=12)
+        self.assertEqual(calls,[json.loads(queued)])
+
+    def test_relocation_rejects_authority_journal_or_probe_identity_changes(self):
+        monitor=Monitor(self.config,self.client);monitor.close()
+        for patch_value in (dict(producer_id='other'),dict(token_file='/other'),
+                            dict(state_dir=str(self.directory/'other-state')),
+                            dict(targets=[dict(self.config['targets'][0],id='new-id')]),
+                            dict(targets=[dict(id='browser',resource_ref='x',kind='unit',unit='x.service')])):
+            with self.assertRaises(ValueError):relocate_monitor(self.config,dict(self.config,**patch_value),self.client)
+        monitor=Monitor(self.config,self.client)
+        self.assertEqual(monitor.db.execute('SELECT value FROM binding').fetchone()[0],binding_digest(self.config))
+        monitor.close()
+
+    def test_relocation_pending_original_blocks_retirement_and_local_history_is_bounded(self):
+        self.client.call.side_effect=Unavailable()
+        monitor=Monitor(self.config,self.client)
+        monitor.tick(lambda _: 'extension_disconnected',now=10)
+        original=monitor.db.execute('SELECT content FROM outbox').fetchone()[0]
+        new=dict(self.config,targets=[dict(self.config['targets'][0],resource_ref='receiving-browser')])
+        with self.assertRaises(Unavailable):monitor.relocate(new,now=11)
+        self.assertEqual(monitor.db.execute('SELECT content FROM outbox').fetchall(),[(original,)])
+        self.assertEqual(monitor.db.execute('SELECT value FROM binding').fetchone()[0],binding_digest(self.config))
+        def accept(method,path,value):
+            return {k:value[k] for k in ('producer_id','incident_id','revision')}
+        self.client.call.side_effect=accept
+        try:
+            for index in range(34):
+                new=dict(self.config,targets=[dict(self.config['targets'][0],resource_ref='receiver-'+str(index))])
+                monitor.relocate(new,now=12+index)
+            self.assertEqual(monitor.db.execute('SELECT count(*) FROM relocations').fetchone()[0],32)
+            self.assertEqual(monitor.db.execute('SELECT count(*) FROM incidents').fetchone()[0],1)
+        finally:monitor.close()
+
 
 import http_contract
 
@@ -172,7 +250,18 @@ class HTTP(unittest.TestCase):
             result=self.call('GET',route)[1]['projection']
             self.assertEqual(result['processing_state'],'resolved')
             self.assertEqual(result['revision'],2)
-        finally:monitor.close()
+            relocated=dict(cfg,targets=[dict(cfg['targets'][0],resource_ref='receiving-browser')])
+            monitor.close()
+            monitor=None
+            relocate_monitor(cfg,relocated)
+            monitor=Monitor(relocated)
+            monitor.tick(lambda _:'extension_disconnected')
+            value=json.loads(monitor.db.execute('select content from incidents').fetchone()[0])
+            actual=self.call('GET','/v1/incidents/fictional-services/'+value['incident_id'])[1]['projection']
+            self.assertEqual(actual['resource_ref'],'receiving-browser')
+            self.assertNotEqual(actual['incident_id'],result['incident_id'])
+        finally:
+            if monitor:monitor.close()
 
 
 if __name__=='__main__':unittest.main()

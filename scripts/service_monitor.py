@@ -177,8 +177,18 @@ REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observa
            'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
 
 
+class BindingChanged(ValueError):
+    pass
+
+
+def binding_digest(config):
+    selection = {k: config[k] for k in ('producer_id', 'observer_id', 'receiving_scope', 'targets', 'base_url', 'token_file')}
+    return hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()
+
+
 class Monitor:
-    def __init__(self, config, client=None):
+    @staticmethod
+    def validate(config):
         for k in ('producer_id', 'observer_id', 'receiving_scope'):
             identifier(config[k])
         targets = config['targets']
@@ -220,6 +230,8 @@ class Monitor:
                     or not isinstance(unit, str)
                     or not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service', unit)):
                 raise ValueError('on-demand policy requires an existing browser and user unit')
+    def __init__(self, config, client=None):
+        self.validate(config)
         self.config = config
         directory = Path(config['state_dir'])
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -240,16 +252,76 @@ class Monitor:
                              'CREATE TABLE IF NOT EXISTS runtime_counters(id TEXT PRIMARY KEY, content TEXT);'
                              'CREATE TABLE IF NOT EXISTS status(value TEXT);'
                              'CREATE TABLE IF NOT EXISTS memory_recovery(id TEXT PRIMARY KEY, since INTEGER, sampled INTEGER);')
-        selection = {k: config[k] for k in ('producer_id', 'observer_id', 'receiving_scope', 'targets', 'base_url', 'token_file')}
-        binding = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()
+        binding = binding_digest(config)
         prior = self.db.execute('SELECT value FROM binding').fetchone()
         if prior and prior[0] != binding:
             self.db.close(); self.lock.close()
-            raise ValueError('changed observer binding requires explicit reconciliation')
+            raise BindingChanged('changed observer binding requires explicit reconciliation')
         with self.db:
             if not prior:
                 self.db.execute('INSERT INTO binding VALUES(?)', (binding,))
         self.client = client or Client(config['base_url'], config['token_file'])
+
+    def relocate(self, replacement, now=None):
+        """Reconcile an explicit physical move, preserving exact pending revisions."""
+        self.validate(replacement)
+        if {k:v for k,v in self.config.items() if k != 'targets'} != {
+                k:v for k,v in replacement.items() if k != 'targets'}:
+            raise ValueError('relocation changes targets only, never authority or journal')
+        old = {t['id']:t for t in self.config['targets']}
+        new = {t['id']:t for t in replacement['targets']}
+        if (old.keys() != new.keys() or any(old[k]['kind'] != new[k]['kind']
+                or old[k]['kind'] == 'enrollment_registry' for k in old)):
+            raise ValueError('relocation preserves fixed probe identities and kinds')
+        changed = [k for k in old if old[k] != new[k]]
+        if not changed:
+            raise ValueError('explicit changed placement required')
+        now = int(time.time()) if now is None else now
+        # Failure here leaves original publications and binding intact. A later
+        # retry sends the retained exact projections, never fabricated recovery.
+        self.flush()
+        with self.db:
+            for key in changed:
+                row = self.db.execute('SELECT content FROM incidents WHERE id=?', (key,)).fetchone()
+                if not row:
+                    continue
+                value = json.loads(row[0])
+                if value['processing_state'] == 'resolved':
+                    continue
+                if value['resource_ref'] != old[key]['resource_ref']:
+                    raise ValueError('relocation cannot rewrite incident provenance')
+                value.update(revision=value['revision']+1, updated_at=max(now, value['updated_at']),
+                             processing_state='resolved', severity='info',
+                             summary=key+': old placement observation retired.',
+                             action='Physical relocation retired this observation. Receiving health must be observed separately; source work and incident history remain retained.')
+                raw = json.dumps(value, sort_keys=True)
+                self.db.execute('UPDATE incidents SET content=? WHERE id=?', (raw,key))
+                self.db.execute('INSERT INTO outbox(content) VALUES(?)', (raw,))
+        self.flush()
+        prior, selected = binding_digest(self.config), binding_digest(replacement)
+        with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS relocations(seq INTEGER PRIMARY KEY, prior TEXT, selected TEXT, content TEXT)')
+            history = {'source_at': now, 'previous_targets': list(old.values()),
+                       'receiving_targets': list(new.values()), 'previous_counters': {},
+                       'previous_memory_recovery': {}, 'retained_incidents': {}}
+            for key in changed:
+                for table, field in [('runtime_counters','previous_counters'), ('incidents','retained_incidents')]:
+                    row = self.db.execute('SELECT content FROM '+table+' WHERE id=?', (key,)).fetchone()
+                    if row:
+                        history[field][key] = json.loads(row[0])
+                row = self.db.execute('SELECT since,sampled FROM memory_recovery WHERE id=?', (key,)).fetchone()
+                if row:
+                    history['previous_memory_recovery'][key] = list(row)
+                self.db.execute('DELETE FROM runtime_counters WHERE id=?', (key,))
+                self.db.execute('DELETE FROM memory_recovery WHERE id=?', (key,))
+            self.db.execute('INSERT INTO relocations(prior,selected,content) VALUES(?,?,?)',
+                            (prior,selected,json.dumps(history,sort_keys=True)))
+            # Bounded local placement/counter audit; published incident history
+            # and unresolved/uncertain work are not removed by this retention.
+            self.db.execute('DELETE FROM relocations WHERE seq NOT IN (SELECT seq FROM relocations ORDER BY seq DESC LIMIT 32)')
+            self.db.execute('UPDATE binding SET value=? WHERE value=?', (selected,prior))
+        self.config = replacement
+        return dict(relocated_targets=changed, receiving_health_verified=False)
 
     def close(self):
         self.db.close(); self.lock.close()
@@ -536,16 +608,44 @@ def enrollments(target):
     return targets
 
 
+def relocate_monitor(config, replacement, client=None, now=None):
+    """Resume the same move after an acknowledged binding switch or lost reply."""
+    if {k:v for k,v in config.items() if k != 'targets'} != {
+            k:v for k,v in replacement.items() if k != 'targets'}:
+        raise ValueError('relocation changes targets only, never authority or journal')
+    monitor = None
+    try:
+        try:
+            monitor = Monitor(config, client)
+        except BindingChanged:
+            monitor = Monitor(replacement, client)
+            table = monitor.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='relocations'").fetchone()
+            row = monitor.db.execute('SELECT prior,selected FROM relocations ORDER BY seq DESC LIMIT 1').fetchone() if table else None
+            if row != (binding_digest(config), binding_digest(replacement)):
+                raise ValueError('retained relocation receipt required')
+            return dict(already_relocated=True, receiving_health_verified=False)
+        return monitor.relocate(replacement, now=now)
+    finally:
+        if monitor:
+            monitor.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
-    parser.add_argument('--retire-enrollment', metavar='NAME',
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--retire-enrollment', metavar='NAME',
                         help='Explicitly archive one old container enrollment and resolve only its observations')
+    action.add_argument('--relocate-to', type=Path, metavar='PRIVATE_CONFIG',
+                        help='Explicitly reconcile changed physical targets, preserving the existing journal and authority')
     args = parser.parse_args()
     os.umask(0o077)
     monitor = None
     try:
         config = json.loads(private_text(args.config))
+        if args.relocate_to:
+            print(json.dumps(relocate_monitor(config, json.loads(private_text(args.relocate_to)))))
+            return 0
         monitor = Monitor(config)
         if args.retire_enrollment:
             print(json.dumps(monitor.retire_enrollment(args.retire_enrollment)))
@@ -553,7 +653,7 @@ def main():
         result = monitor.tick()
         print(json.dumps(result))
         return 0 if result['service_state'] == 'available' else 2
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, Unavailable):
         print(json.dumps({'service_state': 'unavailable', 'reason': 'configuration_or_observation_unavailable'}))
         return 2
     finally:
