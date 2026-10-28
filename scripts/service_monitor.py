@@ -97,6 +97,22 @@ def probe(target):
             return 'native_unresponsive'
         except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
             return 'native_unresponsive'
+    if target['kind'] == 'host_memory':
+        try:
+            memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+            total = int(memory['MemTotal'].split()[0])
+            available = int(memory['MemAvailable'].split()[0])
+            events = dict(line.split() for line in Path('/proc/vmstat').read_text().splitlines())
+            pressure = dict(line.split(' ', 1) for line in Path('/proc/pressure/memory').read_text().splitlines())
+            full = dict(field.split('=') for field in pressure['full'].split())
+            stalled = float(full['avg60'])
+            killed = int(events['oom_kill'])
+            if total <= 0 or not 0 <= available <= total or killed < 0 or not 0 <= stalled <= 100:
+                return 'observation_unreadable'
+            target['_counters'] = {'oom_kill': killed, 'full_avg60_percent': stalled}
+            return 'memory_reclaim_pressure' if stalled >= target['full_avg60_percent'] else 'healthy'
+        except (OSError, ValueError, KeyError):
+            return 'observation_unreadable'
     if target['kind'] == 'cgroup_memory':
         try:
             root = Path(target['cgroup_root'])
@@ -203,6 +219,9 @@ class Monitor:
                         or target.get('scope', 'system') not in ('user','system')
                         or not re.fullmatch('[A-Za-z0-9_.@:-]+\\.service',target['unit'])):
                     raise ValueError('explicit native binary and service required')
+            elif target['kind'] == 'host_memory':
+                if not 0 < target['full_avg60_percent'] <= 100:
+                    raise ValueError('bounded host memory stall threshold required')
             elif target['kind'] == 'cgroup_memory':
                 if (not Path(target['cgroup_root']).is_absolute()
                         or not 0 < target['full_avg60_percent'] <= 100):
@@ -270,7 +289,9 @@ class Monitor:
             raise ValueError('relocation changes targets only, never authority or journal')
         old = {t['id']:t for t in self.config['targets']}
         new = {t['id']:t for t in replacement['targets']}
-        if (old.keys() != new.keys() or any(old[k]['kind'] != new[k]['kind']
+        memory_kinds = {'host_memory', 'cgroup_memory'}
+        if (old.keys() != new.keys() or any((old[k]['kind'] != new[k]['kind']
+                and {old[k]['kind'],new[k]['kind']} != memory_kinds)
                 or old[k]['kind'] == 'enrollment_registry' for k in old)):
             raise ValueError('relocation preserves fixed probe identities and kinds')
         changed = [k for k in old if old[k] != new[k]]
@@ -418,11 +439,11 @@ class Monitor:
                          receiving_scope=self.config['receiving_scope'], resource_ref=target['resource_ref'],
                          incident_id=target['id'] + '-' + secrets.token_hex(12), operation_id='service-' + target['id'],
                          revision=1, phase='availability', problem_code=(
-                             'worker_stalled' if target['kind'] == 'cgroup_memory'
+                             'worker_stalled' if target['kind'] in ('cgroup_memory','host_memory')
                              else 'service_unavailable'),
                          severity=severity, processing_state='open', summary=summary,
                          action=('Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
-                                 if target['kind'] in ('native_codex', 'incus_native', 'cgroup_memory') else
+                                 if target['kind'] in ('native_codex', 'incus_native', 'cgroup_memory', 'host_memory') else
                                  'Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.'),
                          source_at=now, updated_at=now, work_preserved=True)
         raw = json.dumps(value, sort_keys=True)
@@ -432,7 +453,7 @@ class Monitor:
 
     def memory_resolution_ready(self, target, reason, counters, now):
         """Retain an open outage until lower PSI is sustained across real samples."""
-        if target['kind'] != 'cgroup_memory':
+        if target['kind'] not in ('cgroup_memory','host_memory'):
             return True
         prior = self.db.execute('SELECT content FROM incidents WHERE id=?',
                                 (target['id'],)).fetchone()

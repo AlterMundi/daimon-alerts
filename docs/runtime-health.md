@@ -120,6 +120,11 @@ user: a full-OS VM root often exposes PSI but no `memory.current`, `memory.max`
 or `memory.events`. For system services, its real `system.slice` can provide the
 native-work cgroup observation; it does not cover work in other slices or replace
 independent parent-host/whole-VM monitoring. Keep that coverage distinction explicit.
+For a full Linux OS, use `kind: host_memory` with the same bounded
+`full_avg60_percent`. It reads global `/proc/pressure/memory` and `/proc/vmstat`
+OOM-kill counters, validating `/proc/meminfo` availability. It covers all guest
+processes/slices; a low available-memory value alone does not open an incident.
+The same durable OOM edges and120-second sustained-low-PSI recovery apply.
 
 After fencing the old observer/writers and transferring their coherent journal,
 prepare a private receiving config with the actual targets and run the selected
@@ -127,7 +132,8 @@ monitor as its existing owner:
 `service_monitor.py --config OLD_PRIVATE_CONFIG --relocate-to NEW_PRIVATE_CONFIG`.
 Keep both files until adoption/rollback is settled. This operation permits target
 location changes only: producer, observer, grants/token reference, scope, service
-endpoint and state directory remain unchanged, as do target IDs and probe kinds.
+endpoint and state directory remain unchanged, as do target IDs. Probe kinds stay
+fixed except an explicit `cgroup_memory`/`host_memory` boundary transition.
 Hosted registries use their separate enrollment retirement control above.
 
 The command first flushes exact retained publications, resolves only changed
