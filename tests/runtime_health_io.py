@@ -13,6 +13,56 @@ from client import Unavailable
 
 
 class Runtime(unittest.TestCase):
+    def test_full_os_memory_uses_global_psi_and_oom_not_cache_occupancy(self):
+        files={'/proc/meminfo':'MemTotal: 1000 kB\nMemAvailable: 1 kB\n',
+               '/proc/vmstat':'oom_kill 7\n',
+               '/proc/pressure/memory':'some avg60=0\nfull avg60=0\n'}
+        target=dict(kind='host_memory',full_avg60_percent=5)
+        def read(path):return files[str(path)]
+        with patch.object(Path,'read_text',read):
+            self.assertEqual(probe(target),'healthy')
+            self.assertEqual(target['_counters']['oom_kill'],7)
+            files['/proc/pressure/memory']='full avg60=6\n'
+            self.assertEqual(probe(target),'memory_reclaim_pressure')
+            files['/proc/meminfo']='MemTotal: 0 kB\nMemAvailable: 0 kB\n'
+            self.assertEqual(probe(target),'observation_unreadable')
+        with patch.object(Path,'read_text',side_effect=OSError()):
+            self.assertEqual(probe(target),'observation_unreadable')
+
+    def test_cgroup_to_whole_os_move_retains_old_oom_and_starts_new_baseline(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client=Mock();sent=[]
+            def publish(method,path,value):
+                if '/incidents/' in path:
+                    sent.append(dict(value));return {k:value[k] for k in ('producer_id','incident_id','revision')}
+                return {}
+            client.call.side_effect=publish
+            cfg=dict(producer_id='runtime',observer_id='observer',receiving_scope='human',
+                     base_url='http://127.0.0.1:9',token_file=str(root/'token'),state_dir=str(root/'state'),
+                     targets=[dict(id='memory',resource_ref='container',kind='cgroup_memory',
+                                   cgroup_root=str(root),full_avg60_percent=5)])
+            monitor=Monitor(cfg,client)
+            def prior(target):target['_counters']={'oom_kill':2,'full_avg60_percent':8};return 'memory_reclaim_pressure'
+            monitor.tick(prior,now=10)
+            original=sent[-1]['incident_id']
+            new=dict(cfg,targets=[dict(id='memory',resource_ref='full-vm',kind='host_memory',full_avg60_percent=5)])
+            try:
+                monitor.relocate(new,now=11)
+                self.assertEqual(sent[-1]['incident_id'],original)
+                self.assertEqual(sent[-1]['processing_state'],'resolved')
+                def current(target):target['_counters']={'oom_kill':9,'full_avg60_percent':0};return 'healthy'
+                monitor.tick(current,now=12)
+                self.assertEqual(len(sent),2)  # Lifetime9 is a new baseline, not7 fresh OOMs.
+                def pressure(target):target['_counters']={'oom_kill':10,'full_avg60_percent':8};return 'memory_reclaim_pressure'
+                monitor.tick(pressure,now=13)
+                self.assertEqual(sent[-1]['problem_code'],'worker_stalled')
+                self.assertIn('memory oom',sent[-1]['summary'])
+                for time_value in (14,74):monitor.tick(current,now=time_value)
+                self.assertEqual(sent[-1]['processing_state'],'open')
+                monitor.tick(current,now=134)
+                self.assertEqual(sent[-1]['processing_state'],'resolved')
+            finally:monitor.close()
+
     def test_native_control_probe_never_starts_or_replays(self):
         target=dict(kind='native_codex',binary='/codex',unit='native.service')
         for response,expected in [('{"status":"running","appServerVersion":"fixture"}','healthy'),

@@ -120,6 +120,11 @@ user: a full-OS VM root often exposes PSI but no `memory.current`, `memory.max`
 or `memory.events`. For system services, its real `system.slice` can provide the
 native-work cgroup observation; it does not cover work in other slices or replace
 independent parent-host/whole-VM monitoring. Keep that coverage distinction explicit.
+For a full Linux OS, use `kind: host_memory` with the same bounded
+`full_avg60_percent`. It reads global `/proc/pressure/memory` and `/proc/vmstat`
+OOM-kill counters, validating `/proc/meminfo` availability. It covers all guest
+processes/slices; a low available-memory value alone does not open an incident.
+The same durable OOM edges and120-second sustained-low-PSI recovery apply.
 
 After fencing the old observer/writers and transferring their coherent journal,
 prepare a private receiving config with the actual targets and run the selected
@@ -127,7 +132,8 @@ monitor as its existing owner:
 `service_monitor.py --config OLD_PRIVATE_CONFIG --relocate-to NEW_PRIVATE_CONFIG`.
 Keep both files until adoption/rollback is settled. This operation permits target
 location changes only: producer, observer, grants/token reference, scope, service
-endpoint and state directory remain unchanged, as do target IDs and probe kinds.
+endpoint and state directory remain unchanged, as do target IDs. Probe kinds stay
+fixed except an explicit `cgroup_memory`/`host_memory` boundary transition.
 Hosted registries use their separate enrollment retirement control above.
 
 The command first flushes exact retained publications, resolves only changed
@@ -145,3 +151,19 @@ explicit transition after fencing the newer writer, preserving newer journals an
 accepted revisions. The local audit retains the latest32 placement/counter records;
 it never deletes incident projections or pending publications. Alerts core history
 and its independent configured retention remain unchanged.
+
+### Independent availability after relocation
+
+The same private operator registry also accepts `remote-NAME.json` with closed
+schema `cluster-runtime-health-remote/v1`, `name`, `resource_ref`, retained
+`plan_digest` and loopback `base_url`. It adds `NAME-availability` HTTP health
+observation through the existing selected forward without changing observer
+authority or journal binding. Verify that the forward actually reaches the new
+body before selecting the record. This requires no guest credential and does not
+revive an archived local-container enrollment. Endpoint availability is distinct
+from the body's local native/global-memory monitor and provider acceptance.
+Non-loopback URLs and extra executable fields are rejected. An open incident
+cannot be rebound to another resource; retire its original observation explicitly.
+Use `--config PRIVATE_CONFIG --retire-remote NAME` for that retirement. It archives
+only the selected remote record, flushes exact pending publications and resolves
+its existing availability incident without certifying a replacement healthy.
