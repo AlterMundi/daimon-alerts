@@ -224,3 +224,22 @@ observation before Python starts or before the first durable write, and cannot
 retroactively identify legacy attempts that lack metadata. The bounded input
 failure retains `input_timeout`; deploy the compatible observer reader with the
 wrapper. Source text and raw event payload remain absent from the attempt ledger.
+
+## Explicit disposition of an unidentified historical capture
+
+Only after an explicit human decision, `capture_supervisor.py --state-dir PRIVATE
+--dismiss-unknown-attempt EXACT_ID --reason 'EXPLICIT REASON'` closes an expired
+first intent with no event and no source identifier. It refuses a live or
+identified attempt; those require their actual recovery workflow. The retained
+attempt becomes dismissed with its previous state/reason/timestamps and disposition.
+The same incident projects resolved with work_preserved=false and an explicit
+unknown-preservation summary. It does not claim capture, exclusion or success.
+Repetition with the same reason is idempotent; a changed reason is refused.
+
+Deploy the compatible capture projection reader in the existing observer before
+using this control. Keep source bindings and its projection database unchanged;
+verify the same accepted incident reaches a higher resolved revision. Old readers
+cannot interpret dismissed. No acknowledgment, raw core database edit, source
+replay or new monitor is involved. The existing bounded attempt lifecycle keeps
+this terminal disposition for at least24hours before eligible pruning; durable
+service history follows its receiving retention contract.

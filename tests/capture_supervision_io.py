@@ -185,4 +185,31 @@ capture.main()
         finally:
             if process.poll() is None:os.killpg(process.pid,signal.SIGKILL);process.communicate(timeout=5)
 
+class UnknownDisposition(unittest.TestCase):
+    def test_human_closure_retains_uncertainty_and_has_no_recovery_claim(self):
+        from capture_supervisor import directory,begin,dismiss_unknown,atomic
+        with tempfile.TemporaryDirectory() as temp:
+            root=directory(Path(temp)/'attempts');path,a=begin(root,'a'*64,.1)
+            for k in ('started_ns','updated_ns','deadline_ns'):a[k]-=10_000_000_000
+            atomic(path,a)
+            before=safe_projection(root,'a'*64)['items'][0]
+            dismiss_unknown(root,a['attempt_id'],'Human explicitly dismissed this unidentified historical attempt')
+            dismiss_unknown(root,a['attempt_id'],'Human explicitly dismissed this unidentified historical attempt')
+            after=safe_projection(root,'a'*64)['items'][0]
+            self.assertEqual(before['incident_id'],after['incident_id'])
+            self.assertEqual(after['processing_state'],'resolved');self.assertFalse(after['work_preserved'])
+            self.assertIn('preservation remains unknown',after['summary'])
+            retained=json.loads(path.read_text());self.assertEqual(retained['disposition_previous']['state'],'started')
+            self.assertEqual(retained['source_ref'],None);self.assertEqual(retained['event'],None)
+
+    def test_cannot_dismiss_known_source_or_unexpired_attempt(self):
+        from capture_supervisor import directory,begin,dismiss_unknown,atomic
+        with tempfile.TemporaryDirectory() as temp:
+            root=directory(Path(temp)/'attempts');path,a=begin(root,'a'*64,.1)
+            with self.assertRaises(ValueError):dismiss_unknown(root,a['attempt_id'],'Human disposition')
+            for k in ('started_ns','updated_ns','deadline_ns'):a[k]-=10_000_000_000
+            a.update(event='Stop',source_ref='b'*64);atomic(path,a)
+            with self.assertRaises(ValueError):dismiss_unknown(root,a['attempt_id'],'Human disposition')
+            self.assertEqual(json.loads(path.read_text())['state'],'started')
+
 if __name__=='__main__':unittest.main(verbosity=2)
