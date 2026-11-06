@@ -42,6 +42,24 @@ def read_json(url, payload=None):
     return json.loads(raw)
 
 
+def matrix_receiving(command):
+    # The operator-selected adapter authenticates the current application,
+    # not merely its systemd process. It returns no speech or private state.
+    try:
+        result = subprocess.run(command, capture_output=True,
+                                timeout=12, text=True)
+        if result.returncode or len(result.stdout) > 4096:
+            return 'observation_unreadable'
+        value = json.loads(result.stdout)
+        if (set(value) != {'schema', 'ready'}
+                or value['schema'] != 'dm.monitor.matrix-receiving/v1'
+                or type(value['ready']) is not bool):
+            return 'observation_unreadable'
+        return 'healthy' if value['ready'] else 'matrix_reader_unavailable'
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return 'observation_unreadable'
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
     if target['kind'] == 'http_health':
@@ -139,8 +157,10 @@ def probe(target):
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=3)
             props = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
-            return 'healthy' if (result.returncode == 0 and props.get('LoadState') == 'loaded'
-                                 and props.get('ActiveState') == 'active') else 'unit_inactive'
+            if (result.returncode != 0 or props.get('LoadState') != 'loaded'
+                    or props.get('ActiveState') != 'active'):
+                return 'unit_inactive'
+            return matrix_receiving(target['receiving_command']) if 'receiving_command' in target else 'healthy'
         except (OSError, subprocess.TimeoutExpired):
             return 'observation_unreadable'
     # An explicitly stopped on-demand browser is available to start, not healthy
@@ -190,7 +210,7 @@ def probe(target):
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observation_unreadable', 'daemon_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
-           'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
+           'matrix_reader_unavailable', 'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
 
 
 class BindingChanged(ValueError):
@@ -236,6 +256,12 @@ class Monitor:
                     raise ValueError('explicit user/system unit scope required')
                 if not re.fullmatch('[A-Za-z0-9_.@:-]+\\.service', target['unit']):
                     raise ValueError('explicit service unit required')
+                if 'receiving_command' in target:
+                    command = target['receiving_command']
+                    if (not isinstance(command, list) or not 1 <= len(command) <= 8
+                            or any(not isinstance(arg, str) or not arg or len(arg) > 4096 for arg in command)
+                            or not Path(command[0]).is_absolute()):
+                        raise ValueError('explicit bounded Matrix health adapter required')
             else:
                 raise ValueError('unsupported health probe')
         # Demand policy changes observation, not target/producer identity. Keep

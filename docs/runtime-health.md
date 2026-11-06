@@ -167,3 +167,37 @@ cannot be rebound to another resource; retire its original observation explicitl
 Use `--config PRIVATE_CONFIG --retire-remote NAME` for that retirement. It archives
 only the selected remote record, flushes exact pending publications and resolves
 its existing availability incident without certifying a replacement healthy.
+
+
+### Matrix service availability
+
+An active Matrix unit does not establish that the group application has selected
+readers. For a Matrix `unit` target, optionally set `receiving_command` to an
+operator-owned argv (absolute executable, at most8 arguments). The existing
+service monitor first checks the unit, then runs this finite adapter with a
+12second deadline. It requires the closed `dm.monitor.matrix-receiving/v1`
+response with a Boolean `ready`; false reports `matrix_reader_unavailable`.
+Unknown, malformed or failed observations cannot resolve a retained incident.
+No new scheduler, model activation, message or automatic retransmission is added.
+
+The supplied `matrix_receiving_health.py --config PRIVATE_CONFIG` uses the body's
+existing SDK and owner status grant. Its configuration contains `operator`
+(the maintained Cluster operator import directory), `root`, the actual group
+application `socket`, owner-private `state`, and `required_readers` pairs of
+being/embodiment coordinates. Invoke it through that body's selected SDK Python;
+keep these local bindings out of public source. It authenticates the current
+application, compares the required reader vector, current credential validity,
+authority epochs, roster and own loaded application/software selection. It reads
+no inbox and wakes no model. Local reader readiness does not prove peer process
+availability, delivery, model attention or a human reading; retain those separately.
+Install the same local observation on each selected living receiver.
+
+The adapter retains one replaceable read-only status request plus its lock. Exact
+status reads recompute live native state; no token per tick or report history is
+created. Its atomic temporary file is replaced on process/profile change. The
+existing Alerts journal/outbox and core retention remain authoritative. Reuse the
+existing service timer and limits. To disable just this observation, explicitly
+reconcile the target without `receiving_command`; do not pause native work or
+messaging. A software update is complete only after current all-required reader
+qualification and selection, using Cluster's existing SDK-successor route. A
+service restart is not a substitute for that selection after software changes.
