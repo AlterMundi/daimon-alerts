@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from client import Unavailable
-from service_monitor import Monitor, probe, relocate_monitor, binding_digest
+from service_monitor import Monitor, probe, relocate_monitor, binding_digest, matrix_receiving
 
 
 def configuration(path):
@@ -18,6 +18,22 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_matrix_process_is_not_receiving_readiness(self):
+        target = dict(kind='matrix_receiving', command=['/fictional/adapter'])
+        for ready, expected in [(True, 'healthy'), (False, 'matrix_reader_unavailable')]:
+            value = dict(schema='dm.monitor.matrix-receiving/v1', ready=ready)
+            result = Mock(returncode=0, stdout=json.dumps(value))
+            with patch('service_monitor.subprocess.run', return_value=result) as run:
+                self.assertEqual(matrix_receiving(target['command']), expected)
+                self.assertEqual(run.call_args.kwargs['timeout'], 12)
+        for result in [Mock(returncode=1, stdout='private failure'),
+                       Mock(returncode=0, stdout='{}'),
+                       Mock(returncode=0, stdout='x'*4097)]:
+            with patch('service_monitor.subprocess.run', return_value=result):
+                self.assertEqual(matrix_receiving(target['command']), 'observation_unreadable')
+        with patch('service_monitor.subprocess.run', side_effect=OSError()):
+            self.assertEqual(matrix_receiving(target['command']), 'observation_unreadable')
+
     def test_external_health_requires_actual_bounded_remote_response(self):
         target = dict(kind='http_health', base_url='http://127.0.0.1:12345')
         for value, expected in [({'ok': True}, 'healthy'), ({'ok': False}, 'health_unavailable'),
@@ -38,6 +54,16 @@ class Probes(unittest.TestCase):
                 self.assertEqual(read.call_count,1)
         with patch('service_monitor.read_json',side_effect=[{'running':True,'extension_connected':True},{'ok':False,'error':'private server text'}]):
             self.assertEqual(probe(dict(kind='webbridge',base_url='http://127.0.0.1:10086')),'extension_unresponsive')
+
+    def test_selected_matrix_unit_also_requires_its_reader_gate(self):
+        target = dict(kind='unit', unit='fictional.service', scope='system',
+                      receiving_command=['/fictional/health'])
+        for state, calls in [('active', 1), ('inactive', 0)]:
+            result = Mock(returncode=0, stdout=f'LoadState=loaded\nActiveState={state}\n')
+            with patch('service_monitor.subprocess.run', return_value=result), patch(
+                    'service_monitor.matrix_receiving', return_value='matrix_reader_unavailable') as reader:
+                self.assertEqual(probe(target), 'matrix_reader_unavailable' if calls else 'unit_inactive')
+                self.assertEqual(reader.call_count, calls)
 
     def test_system_and_user_unit_observation_use_the_selected_scope(self):
         result=Mock(returncode=0,stdout='LoadState=loaded\nActiveState=active\n')
