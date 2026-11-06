@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from client import Unavailable
-from service_monitor import Monitor, probe, relocate_monitor, binding_digest, matrix_receiving
+from service_monitor import Monitor, probe, relocate_monitor, binding_digest, matrix_receiving, extend_monitor
 
 
 def configuration(path):
@@ -18,6 +18,26 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_scheduled_job_distinguishes_disabled_failed_stale_and_running(self):
+        target = dict(kind='scheduled_job', scope='user', timer='cleanup.timer',
+                      unit='cleanup.service', max_age_seconds=7200, max_run_seconds=300)
+        timer = 'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n'
+        job = 'LoadState=loaded\nActiveState=inactive\nResult=success\nExecMainStatus=0\nExecMainExitTimestampMonotonic=9000000000\n'
+        cases = [(timer, job, 'healthy'),
+                 (timer.replace('enabled','disabled'), job, 'unit_inactive'),
+                 (timer.replace('active','inactive'), job, 'unit_inactive'),
+                 (timer, job.replace('success','exit-code').replace('Status=0','Status=1'), 'health_unavailable'),
+                 (timer, job.replace('9000000000','1000000000'), 'health_unavailable'),
+                 (timer, job.replace('9000000000','0'), 'health_unavailable'),
+                 (timer, job.replace('9000000000','11000000000'), 'health_unavailable'),
+                 (timer, 'LoadState=loaded\nActiveState=activating\nExecMainStartTimestampMonotonic=9900000000\n', 'healthy'),
+                 (timer, 'LoadState=loaded\nActiveState=activating\nExecMainStartTimestampMonotonic=9000000000\n', 'health_unavailable')]
+        for t,j,expected in cases:
+            with self.subTest(expected=expected,t=t,j=j), patch('service_monitor.subprocess.run',
+                    side_effect=[Mock(returncode=0,stdout=t),Mock(returncode=0,stdout=j)]), patch(
+                    'service_monitor.Path.read_text', return_value='10000 0'):
+                self.assertEqual(probe(target), expected)
+
     def test_matrix_process_is_not_receiving_readiness(self):
         target = dict(kind='matrix_receiving', command=['/fictional/adapter'])
         for ready, expected in [(True, 'healthy'), (False, 'matrix_reader_unavailable')]:
@@ -248,6 +268,29 @@ class Durable(unittest.TestCase):
             self.assertEqual(monitor.db.execute('SELECT count(*) FROM relocations').fetchone()[0],32)
             self.assertEqual(monitor.db.execute('SELECT count(*) FROM incidents').fetchone()[0],1)
         finally:monitor.close()
+
+
+class Extension(unittest.TestCase):
+    def test_addition_preserves_history_and_lost_reply_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory); cfg = configuration(p)
+            client = Mock()
+            client.call.side_effect = lambda method,path,value: {k:value[k] for k in ('producer_id','incident_id','revision') if k in value}
+            m = Monitor(cfg, client)
+            m.tick(lambda _: 'extension_disconnected', now=100)
+            history = m.db.execute('SELECT content FROM incidents').fetchall()
+            m.close()
+            extra = dict(id='cleanup',resource_ref='host',kind='scheduled_job',scope='user',
+                         timer='cleanup.timer',unit='cleanup.service',max_age_seconds=7200,max_run_seconds=300)
+            new = dict(cfg,targets=cfg['targets']+[extra])
+            self.assertEqual(extend_monitor(cfg,new,client)['added_targets'], ['cleanup'])
+            self.assertTrue(extend_monitor(cfg,new,client)['already_extended'])
+            m = Monitor(new,client)
+            self.assertEqual(m.db.execute('SELECT content FROM incidents').fetchall(), history)
+            with self.assertRaises(ValueError): m.extend(dict(new,targets=[extra]))
+            m.close()
+            for change in [dict(extra,max_age_seconds=0),dict(extra,timer='other.timer'),dict(extra,scope='unknown')]:
+                with self.assertRaises(ValueError): Monitor.validate(dict(cfg,targets=[change]))
 
 
 import http_contract

@@ -60,8 +60,39 @@ def matrix_receiving(command):
         return 'observation_unreadable'
 
 
+def scheduled_job(target):
+    """Observe the selected timer and its real finite-job outcome, not inactivity."""
+    command = ['systemctl'] + (['--user'] if target['scope'] == 'user' else [])
+    def properties(unit):
+        result = subprocess.run(command + ['show', unit,
+            '--property=LoadState,ActiveState,UnitFileState,Result,ExecMainStatus,ExecMainStartTimestampMonotonic,ExecMainExitTimestampMonotonic'],
+            capture_output=True, text=True, timeout=3)
+        if result.returncode or len(result.stdout) > 4096:
+            raise ValueError('bounded unit observation required')
+        return dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    try:
+        timer, job = properties(target['timer']), properties(target['unit'])
+        if (timer.get('LoadState') != 'loaded' or timer.get('ActiveState') != 'active'
+                or timer.get('UnitFileState') != 'enabled' or job.get('LoadState') != 'loaded'):
+            return 'unit_inactive'
+        uptime = float(Path('/proc/uptime').read_text().split()[0])
+        if job.get('ActiveState') in ('active', 'activating'):
+            start = int(job.get('ExecMainStartTimestampMonotonic', '0')) / 1e6
+            return ('healthy' if start > 0 and 0 <= uptime-start <= target['max_run_seconds']
+                    else 'health_unavailable')
+        end = int(job.get('ExecMainExitTimestampMonotonic', '0')) / 1e6
+        return ('healthy' if job.get('ActiveState') == 'inactive'
+                and job.get('Result') == 'success' and job.get('ExecMainStatus') == '0'
+                and end > 0 and 0 <= uptime-end <= target['max_age_seconds']
+                else 'health_unavailable')
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return 'observation_unreadable'
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'scheduled_job':
+        return scheduled_job(target)
     if target['kind'] == 'http_health':
         try:
             value = read_json(target['base_url'].rstrip('/') + '/health')
@@ -251,6 +282,15 @@ class Monitor:
                         or not Path(target['incus_binary']).is_absolute()
                         or not 0 < target['full_avg60_percent'] <= 100):
                     raise ValueError('explicit enrollment registry and Incus required')
+            elif target['kind'] == 'scheduled_job':
+                if (target.get('scope') not in ('user', 'system')
+                        or not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service', target['unit'])
+                        or target['timer'] != target['unit'][:-8]+'.timer'
+                        or type(target['max_age_seconds']) is not int
+                        or not 60 <= target['max_age_seconds'] <= 86400
+                        or type(target['max_run_seconds']) is not int
+                        or not 10 <= target['max_run_seconds'] <= 3600):
+                    raise ValueError('explicit bounded scheduled service/timer required')
             elif target['kind'] == 'unit':
                 if target.get('scope', 'user') not in ('user', 'system'):
                     raise ValueError('explicit user/system unit scope required')
@@ -306,6 +346,26 @@ class Monitor:
             if not prior:
                 self.db.execute('INSERT INTO binding VALUES(?)', (binding,))
         self.client = client or Client(config['base_url'], config['token_file'])
+
+    def extend(self, replacement):
+        """Explicitly add fixed targets without rewriting any retained incident."""
+        self.validate(replacement)
+        if {k:v for k,v in self.config.items() if k != 'targets'} != {
+                k:v for k,v in replacement.items() if k != 'targets'}:
+            raise ValueError('extension preserves authority and journal')
+        old = {t['id']:t for t in self.config['targets']}
+        new = {t['id']:t for t in replacement['targets']}
+        if not old.keys() < new.keys() or any(new[k] != v for k,v in old.items()):
+            raise ValueError('extension only adds targets, never changes old targets')
+        self.flush()
+        prior, selected = binding_digest(self.config), binding_digest(replacement)
+        with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS extensions(seq INTEGER PRIMARY KEY, prior TEXT, selected TEXT)')
+            self.db.execute('INSERT INTO extensions(prior,selected) VALUES(?,?)', (prior, selected))
+            self.db.execute('DELETE FROM extensions WHERE seq NOT IN (SELECT seq FROM extensions ORDER BY seq DESC LIMIT 32)')
+            self.db.execute('UPDATE binding SET value=?', (selected,))
+        self.config = replacement
+        return dict(added_targets=sorted(new.keys()-old.keys()), receiving_health_verified=False)
 
     def relocate(self, replacement, now=None):
         """Reconcile an explicit physical move, preserving exact pending revisions."""
@@ -698,6 +758,24 @@ def relocate_monitor(config, replacement, client=None, now=None):
             monitor.close()
 
 
+def extend_monitor(config, replacement, client=None):
+    monitor = None
+    try:
+        try:
+            monitor = Monitor(config, client)
+        except BindingChanged:
+            monitor = Monitor(replacement, client)
+            table = monitor.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='extensions'").fetchone()
+            row = monitor.db.execute('SELECT prior,selected FROM extensions ORDER BY seq DESC LIMIT 1').fetchone() if table else None
+            if row != (binding_digest(config), binding_digest(replacement)):
+                raise ValueError('retained target-extension receipt required')
+            return dict(already_extended=True, receiving_health_verified=False)
+        return monitor.extend(replacement)
+    finally:
+        if monitor:
+            monitor.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -708,11 +786,16 @@ def main():
                         help='Explicitly reconcile changed physical targets, preserving the existing journal and authority')
     action.add_argument('--retire-remote',metavar='NAME',
                         help='Retire one remote availability record, preserving exact pending publications')
+    action.add_argument('--extend-to', type=Path, metavar='PRIVATE_CONFIG',
+                        help='Explicitly add targets, preserving current observations and authority')
     args = parser.parse_args()
     os.umask(0o077)
     monitor = None
     try:
         config = json.loads(private_text(args.config))
+        if args.extend_to:
+            print(json.dumps(extend_monitor(config, json.loads(private_text(args.extend_to)))))
+            return 0
         if args.relocate_to:
             print(json.dumps(relocate_monitor(config, json.loads(private_text(args.relocate_to)))))
             return 0

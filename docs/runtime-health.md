@@ -201,3 +201,22 @@ reconcile the target without `receiving_command`; do not pause native work or
 messaging. A software update is complete only after current all-required reader
 qualification and selection, using Cluster's existing SDK-successor route. A
 service restart is not a substitute for that selection after software changes.
+
+## Scheduled maintenance health
+
+A `scheduled_job` target observes an explicitly selected system/user service and
+its matching enabled timer. Configure `unit`, `timer`, `scope`,
+`max_age_seconds` (60–86400) and `max_run_seconds` (10–3600). Healthy includes
+a successful inactive oneshot within its cadence or a running invocation within
+its runtime limit. Disabled timers, failed/missing runs, stale outcomes and
+overlong invocations are unhealthy. Monotonic systemd timestamps are compared
+with this boot's uptime; no job output or command arguments are published.
+This observes exit status, not application-specific cleanup correctness.
+
+To enroll another target, prepare a private replacement config preserving every
+existing target, authority and journal, then invoke the selected monitor with
+`--config OLD --extend-to NEW`. It drains retained exact publications before
+atomically recording the binding extension; exact retries use that receipt.
+Select NEW only after acknowledgment. History and pending work are preserved;
+this does not install another timer or authorize automatic repair. The existing
+16-target limit and bounded32extension receipts apply.
