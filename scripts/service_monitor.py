@@ -51,6 +51,10 @@ def matrix_receiving(command):
         if result.returncode or len(result.stdout) > 4096:
             return 'observation_unreadable'
         value = json.loads(result.stdout)
+        if (set(value) == {'schema', 'state'}
+                and value['schema'] == 'dm.monitor.matrix-receiving/v2'
+                and value['state'] in {'matrix_local_capability_expiring', 'matrix_listener_unavailable'}):
+            return value['state']
         if (set(value) != {'schema', 'ready'}
                 or value['schema'] != 'dm.monitor.matrix-receiving/v1'
                 or type(value['ready']) is not bool):
@@ -241,7 +245,8 @@ def probe(target):
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observation_unreadable', 'daemon_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
-           'matrix_reader_unavailable', 'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
+           'matrix_reader_unavailable', 'matrix_local_capability_expiring', 'matrix_listener_unavailable',
+           'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
 
 
 class BindingChanged(ValueError):
