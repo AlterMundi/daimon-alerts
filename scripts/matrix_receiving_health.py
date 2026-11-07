@@ -15,6 +15,41 @@ import sys
 import time
 
 
+class LocalHealthFailure(ValueError):
+    pass
+
+
+def check_local_health(config, descriptor, pid, now_ms, *, proc=Path('/proc')):
+    expiry = descriptor.get('not_after_ms')
+    if expiry is not None and expiry - now_ms <= 86400000:
+        raise LocalHealthFailure('matrix_local_capability_expiring')
+    listener = config.get('listener')
+    if listener is None:
+        return
+    if (set(listener) != {'host', 'port'} or listener['host'] != '127.0.0.1'
+            or type(listener['port']) is not int or not 1 <= listener['port'] <= 65535):
+        raise ValueError('explicit IPv4 loopback listener required')
+    # An ingress proxy can keep accepting TCP while its actual daemon is gone.
+    # Match the authenticated daemon's own listening fd, not the proxy's port.
+    fds = list((proc / str(pid) / 'fd').iterdir())
+    if len(fds) > 4096:
+        raise ValueError('bounded process descriptors required')
+    sockets = set()
+    for path in fds:
+        try:
+            sockets.add(os.readlink(path))
+        except FileNotFoundError:
+            continue  # A concurrent close is normal; an absent listener fails below.
+    raw = (proc / str(pid) / 'net/tcp').read_bytes()
+    if len(raw) > 262144:
+        raise ValueError('bounded socket inventory required')
+    address = f'0100007F:{listener["port"]:04X}'
+    if not any(len(row) > 9 and row[1] == address and row[3] == '0A'
+               and 'socket:[' + row[9] + ']' in sockets
+               for row in (line.split() for line in raw.decode().splitlines()[1:])):
+        raise LocalHealthFailure('matrix_listener_unavailable')
+
+
 def ready(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
     from daimon_matrix.canonical import canonical_bytes
@@ -99,6 +134,8 @@ def inspect(config):
             raise ValueError('authenticated status unavailable')
         if response['result']['loaded_runtime']['process_id'] != process['pid']:
             raise ValueError('process changed')
+        check_local_health(config, cfg.capability.descriptor, process['pid'], time.time_ns()//1_000_000)
+        observer.verify()
         return ready(response['result'], response['server'], config['required_readers'], time.time_ns()//1_000_000)
 
 
@@ -110,6 +147,9 @@ def main():
     try:
         config = json.loads(args.config.read_text())
         result = inspect(config)
+    except LocalHealthFailure as failure:
+        print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v2', state=str(failure))))
+        return 0
     except Exception:
         # No daemon exception, private path, credential or source text escapes.
         return 1

@@ -220,3 +220,21 @@ atomically recording the binding extension; exact retries use that receipt.
 Select NEW only after acknowledgment. History and pending work are preserved;
 this does not install another timer or authorize automatic repair. The existing
 16-target limit and bounded32extension receipts apply.
+
+
+## Local Matrix capability and listener health
+
+The existing Matrix receiving probe warns with `matrix_local_capability_expiring`
+when its local status role has at most24hours remaining. Current authentication
+and signed reader validity stay separate. This observation neither renews grants
+nor treats an expired grant as authority. Use the existing native V8 explicit
+owner renewal transaction, preserving keys, identity and all uncertain requests.
+
+An optional private probe setting `listener: {"host":"127.0.0.1","port":8732}`
+requires the authenticated daemon PID itself to own that listening socket. It
+reads the existing Linux process/socket inventory, bounded to4096fds and256KiB;
+it sends no request and reads no inbox. A running forwarding proxy cannot satisfy
+this check. Absence reports `matrix_listener_unavailable`. The existing monitor
+accepts those two closed v2 states and retains v1 readiness compatibility.
+Existing timer, authentication, journals, retry semantics and retention apply.
+A healthy listener still does not establish delivery of a particular message.

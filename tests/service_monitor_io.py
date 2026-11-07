@@ -46,6 +46,10 @@ class Probes(unittest.TestCase):
             with patch('service_monitor.subprocess.run', return_value=result) as run:
                 self.assertEqual(matrix_receiving(target['command']), expected)
                 self.assertEqual(run.call_args.kwargs['timeout'], 12)
+        for state in ('matrix_local_capability_expiring', 'matrix_listener_unavailable'):
+            result = Mock(returncode=0, stdout=json.dumps(dict(schema='dm.monitor.matrix-receiving/v2', state=state)))
+            with patch('service_monitor.subprocess.run', return_value=result):
+                self.assertEqual(matrix_receiving(target['command']), state)
         for result in [Mock(returncode=1, stdout='private failure'),
                        Mock(returncode=0, stdout='{}'),
                        Mock(returncode=0, stdout='x'*4097)]:
