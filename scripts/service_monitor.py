@@ -292,7 +292,7 @@ class Monitor:
                         or not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service', target['unit'])
                         or target['timer'] != target['unit'][:-8]+'.timer'
                         or type(target['max_age_seconds']) is not int
-                        or not 60 <= target['max_age_seconds'] <= 86400
+                        or not 60 <= target['max_age_seconds'] <= 172800
                         or type(target['max_run_seconds']) is not int
                         or not 10 <= target['max_run_seconds'] <= 3600):
                     raise ValueError('explicit bounded scheduled service/timer required')

@@ -38,6 +38,35 @@ class Probes(unittest.TestCase):
                     'service_monitor.Path.read_text', return_value='10000 0'):
                 self.assertEqual(probe(target), expected)
 
+    def test_daily_cadence_grace_never_hides_failed_or_missed_runs(self):
+        target = dict(kind='scheduled_job', scope='system', timer='daily.timer',
+                      unit='daily.service', max_age_seconds=93600, max_run_seconds=900)
+        timer = 'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n'
+        job = ('LoadState=loaded\nActiveState=inactive\nResult=success\n'
+               'ExecMainStatus=0\nExecMainExitTimestampMonotonic=5000000000\n')
+        cases = [(job, 'healthy'),
+                 (job.replace('5000000000', '1000000'), 'health_unavailable'),
+                 (job.replace('success', 'exit-code').replace('Status=0', 'Status=2'),
+                  'health_unavailable'),
+                 ('LoadState=loaded\nActiveState=activating\n'
+                  'ExecMainStartTimestampMonotonic=94000000000\n', 'health_unavailable')]
+        for actual, expected in cases:
+            with self.subTest(expected=expected), patch('service_monitor.subprocess.run',
+                    side_effect=[Mock(returncode=0,stdout=timer),Mock(returncode=0,stdout=actual)]), patch(
+                    'service_monitor.Path.read_text', return_value='95000 0'):
+                self.assertEqual(probe(target), expected)
+
+    def test_scheduled_job_age_is_bounded_with_daily_grace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = configuration(Path(directory))
+            target = dict(id='daily',resource_ref='host',kind='scheduled_job',scope='system',
+                          timer='daily.timer',unit='daily.service',max_run_seconds=900)
+            for age in (60, 86400, 93600, 172800):
+                Monitor.validate(dict(cfg,targets=[dict(target,max_age_seconds=age)]))
+            for age in (59, 172801, True, '93600'):
+                with self.subTest(age=age), self.assertRaises(ValueError):
+                    Monitor.validate(dict(cfg,targets=[dict(target,max_age_seconds=age)]))
+
     def test_matrix_process_is_not_receiving_readiness(self):
         target = dict(kind='matrix_receiving', command=['/fictional/adapter'])
         for ready, expected in [(True, 'healthy'), (False, 'matrix_reader_unavailable')]:
