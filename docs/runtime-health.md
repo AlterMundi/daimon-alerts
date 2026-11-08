@@ -217,6 +217,18 @@ overlong invocations are unhealthy. Monotonic systemd timestamps are compared
 with this boot's uptime; no job output or command arguments are published.
 This observes exit status, not application-specific cleanup correctness.
 
+For a dependent job invoked by an existing timer's service, explicitly select
+`trigger_unit` as that timer's matching service. The observed `unit` can then
+have its own name. Receiving observation requires the timer's actual `Triggers`
+to include `trigger_unit`, and that loaded service's actual `Wants`/`Requires`
+and `After` to include the observed job. Missing pull-in/order makes observation
+unhealthy even after an earlier successful manual job. The existing freshness,
+failed-exit and runtime checks still apply to the job itself. This supports a
+maintained service chain without another timer; it creates no dependency or
+schedule by itself. Without `trigger_unit`, the original matching-name contract
+is unchanged. Add this field through the existing explicit target extension or
+relocation control; editing a bound configuration alone remains refused.
+
 To enroll another target, prepare a private replacement config preserving every
 existing target, authority and journal, then invoke the selected monitor with
 `--config OLD --extend-to NEW`. It drains retained exact publications before
