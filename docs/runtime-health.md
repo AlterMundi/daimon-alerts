@@ -206,7 +206,11 @@ service restart is not a substitute for that selection after software changes.
 
 A `scheduled_job` target observes an explicitly selected system/user service and
 its matching enabled timer. Configure `unit`, `timer`, `scope`,
-`max_age_seconds` (60–86400) and `max_run_seconds` (10–3600). Healthy includes
+`max_age_seconds` (60–172800) and `max_run_seconds` (10–3600). The two-day
+ceiling allows a daily job plus explicit scheduling/detection grace without
+loosening its runtime bound. Choose that grace from the actual timer jitter and
+incident-response need; it does not change the timer or defer a known failed
+exit. Healthy includes
 a successful inactive oneshot within its cadence or a running invocation within
 its runtime limit. Disabled timers, failed/missing runs, stale outcomes and
 overlong invocations are unhealthy. Monotonic systemd timestamps are compared
