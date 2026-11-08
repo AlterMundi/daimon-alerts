@@ -102,8 +102,25 @@ def scheduled_job(target):
         return 'observation_unreadable'
 
 
+def https_group(target):
+    if target.get('enabled',True) is False:
+        return 'standby'
+    # A fixed deployment's small endpoint set shares one observation/incident.
+    # This does not turn an endpoint failure into a physical-host diagnosis.
+    def check(endpoint):
+        try:
+            value=read_json(endpoint['url'])
+            return isinstance(value,dict) and value.get('ok') is True
+        except (OSError,ValueError,TypeError):
+            return False
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        return 'healthy' if all(list(pool.map(check,target['endpoints']))) else 'health_unavailable'
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'https_health_group':
+        return https_group(target)
     if target['kind'] == 'scheduled_job':
         return scheduled_job(target)
     if target['kind'] == 'http_health':
@@ -275,10 +292,36 @@ class Monitor:
         targets = config['targets']
         if not 1 <= len(targets) <= 16 or len({t['id'] for t in targets}) != len(targets):
             raise ValueError('bounded unique target selection required')
+        if sum(len(t['endpoints']) for t in targets if t.get('kind')=='https_health_group' and isinstance(t.get('endpoints'),list))>4:
+            raise ValueError('at most four external HTTPS health endpoints per observer')
         for target in targets:
             identifier(target['id']); identifier(target['resource_ref'])
             if target['kind'] in ('webbridge', 'http_health'):
                 local_url(target['base_url'])
+            elif target['kind']=='https_health_group':
+                entries=target.get('endpoints')
+                if (not {'id','resource_ref','kind','endpoints'}<=set(target)
+                        or set(target)-{'id','resource_ref','kind','endpoints','enabled'}
+                        or type(target.get('enabled',True)) is not bool
+                        or not isinstance(entries,list) or not 1<=len(entries)<=4):
+                    raise ValueError('bounded explicit HTTPS endpoint group required')
+                ids=set();urls=set()
+                for entry in entries:
+                    if not isinstance(entry,dict) or set(entry)!={'id','url'}:
+                        raise ValueError('closed HTTPS health endpoint required')
+                    identifier(entry['id'])
+                    url=entry['url']
+                    if not isinstance(url,str) or len(url)>2048:
+                        raise ValueError('bounded HTTPS health URL required')
+                    u=urllib.parse.urlsplit(url)
+                    _=u.port  # Validate malformed/out-of-range ports before probing.
+                    if (u.scheme!='https' or not u.hostname or u.username or u.password
+                            or u.query or u.fragment or not u.path.endswith('/health')
+                            or any(c.isspace() for c in url)):
+                        raise ValueError('explicit credential-free HTTPS health required')
+                    if entry['id'] in ids or url in urls:
+                        raise ValueError('unique HTTPS endpoints required')
+                    ids.add(entry['id']);urls.add(url)
             elif target['kind'] == 'native_codex':
                 if (not Path(target['binary']).is_absolute()
                         or target.get('scope', 'system') not in ('user','system')

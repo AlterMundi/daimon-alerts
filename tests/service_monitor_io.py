@@ -18,6 +18,68 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_explicit_https_group_is_bounded_and_credential_free(self):
+        target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
+                    endpoints=[dict(id='one',url='https://one.example/interaction/health'),
+                               dict(id='two',url='https://two.example/interaction/health')])
+        with tempfile.TemporaryDirectory() as directory:
+            cfg=configuration(Path(directory));Monitor.validate(dict(cfg,targets=[target]))
+            invalid=[None,[],target['endpoints']*3,[dict(id='one',url='http://one.example/health')],
+                     [dict(id='one',url='https://user:secret@one.example/health')],
+                     [dict(id='one',url='https://one.example/health?token=secret')],
+                     [dict(id='one',url='https://one.example/health#fragment')],
+                     [dict(id='one',url='https://one.example:invalid/health')],
+                     [dict(id='one',url='https://one.example/health',extra=True)],
+                     [target['endpoints'][0],target['endpoints'][0]]]
+            for entries in invalid:
+                with self.subTest(entries=entries),self.assertRaises(ValueError):
+                    Monitor.validate(dict(cfg,targets=[dict(target,endpoints=entries)]))
+            groups=[dict(target,id=str(i)) for i in range(3)]
+            with self.assertRaises(ValueError):Monitor.validate(dict(cfg,targets=groups))
+
+    def test_disabled_group_is_intentional_standby_without_network_access(self):
+        with patch('service_monitor.read_json',side_effect=AssertionError('disabled reader')):
+            self.assertEqual(probe(dict(kind='https_health_group',enabled=False,endpoints=[])),'standby')
+        with tempfile.TemporaryDirectory() as directory:
+            cfg=configuration(Path(directory))
+            target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
+                        enabled=False,endpoints=[dict(id='one',url='https://one.example/health')])
+            Monitor.validate(dict(cfg,targets=[target]))
+            with self.assertRaises(ValueError):
+                Monitor.validate(dict(cfg,targets=[dict(target,enabled='false')]))
+
+    def test_existing_reconciliation_disables_and_restores_only_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory);cfg=configuration(path)
+            group=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
+                       endpoints=[dict(id='one',url='https://one.example/health')])
+            cfg=dict(cfg,targets=cfg['targets']+[group]);disabled=dict(cfg,targets=cfg['targets'][:-1]+[dict(group,enabled=False)])
+            client=Mock();pending=path/'pending';pending.write_bytes(b'keep')
+            monitor=Monitor(cfg,client)
+            try:
+                monitor.relocate(disabled,now=100)
+                self.assertEqual(probe(disabled['targets'][-1]),'standby')
+                self.assertEqual(monitor.config['targets'][0],cfg['targets'][0])
+            finally:monitor.close()
+            monitor=Monitor(disabled,client)
+            try:monitor.relocate(cfg,now=101)
+            finally:monitor.close()
+            monitor=Monitor(cfg,client)
+            try:self.assertEqual(pending.read_bytes(),b'keep')
+            finally:monitor.close()
+            client.call.assert_not_called()
+
+    def test_group_needs_every_endpoint_and_retains_no_payload(self):
+        target=dict(kind='https_health_group',endpoints=[dict(id=str(i),url=str(i)) for i in range(4)])
+        for fault in (None,False,'unavailable','bad-json'):
+            def read(url):
+                if url=='2' and fault=='unavailable':raise OSError('private network detail')
+                if url=='2' and fault=='bad-json':raise ValueError('private response')
+                return {'ok':False if url=='2' and fault is False else True,'private':'not retained'}
+            with self.subTest(fault=fault),patch('service_monitor.read_json',side_effect=read) as calls:
+                self.assertEqual(probe(target),'healthy' if fault is None else 'health_unavailable')
+                self.assertEqual(calls.call_count,4)
+
     def test_scheduled_dependency_needs_actual_timer_and_ordered_pull_in(self):
         target=dict(id='packages',resource_ref='host',kind='scheduled_job',scope='system',
                     timer='daily.timer',trigger_unit='daily.service',unit='packages.service',
