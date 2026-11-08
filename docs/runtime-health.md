@@ -254,3 +254,28 @@ this check. Absence reports `matrix_listener_unavailable`. The existing monitor
 accepts those two closed v2 states and retains v1 readiness compatibility.
 Existing timer, authentication, journals, retry semantics and retention apply.
 A healthy listener still does not establish delivery of a particular message.
+
+## Bounded HTTPS deployment group
+
+An explicitly configured `kind: https_health_group` observes up to four fixed
+public health endpoints from the receiving observer host. Its fields are exactly
+`id`, `resource_ref`, `kind` and `endpoints`; each endpoint has only an opaque
+`id` and its complete HTTPS `url` ending in `/health`. Credentials, query strings,
+fragments, duplicate endpoints and unbounded lists are refused. The total across
+all such groups in one observer is at most four; the existing 16-target limit
+is unchanged. Configuration is an owner selection, not a remotely supplied URL.
+
+The group performs only the existing bounded JSON GET with TLS verification,
+no redirect or proxy, no authentication cookies and no model/browser operation.
+At most four reads run concurrently. Every endpoint must return a JSON object
+with boolean `ok: true`; any missing, malformed or failed response degrades the
+whole group. Only the closed health code is retained; response bodies, URLs and
+raw network errors do not enter incidents. This detects endpoint/route/service
+unavailability from outside the deployment. It does not diagnose physical host
+power, prove Conversation authentication or assert a working provider/model.
+
+Use the existing explicit target-extension control to add the selected group,
+preserving producer authority, all original targets, journal, incidents and timer.
+Qualify the real endpoints and the subsequent periodic observer before claiming
+receiving adoption. Keep controlled fault tests separate from real outages;
+never power off a host or interrupt a child's service to test this adapter.
