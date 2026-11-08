@@ -37,6 +37,38 @@ class Probes(unittest.TestCase):
             groups=[dict(target,id=str(i)) for i in range(3)]
             with self.assertRaises(ValueError):Monitor.validate(dict(cfg,targets=groups))
 
+    def test_disabled_group_is_intentional_standby_without_network_access(self):
+        with patch('service_monitor.read_json',side_effect=AssertionError('disabled reader')):
+            self.assertEqual(probe(dict(kind='https_health_group',enabled=False,endpoints=[])),'standby')
+        with tempfile.TemporaryDirectory() as directory:
+            cfg=configuration(Path(directory))
+            target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
+                        enabled=False,endpoints=[dict(id='one',url='https://one.example/health')])
+            Monitor.validate(dict(cfg,targets=[target]))
+            with self.assertRaises(ValueError):
+                Monitor.validate(dict(cfg,targets=[dict(target,enabled='false')]))
+
+    def test_existing_reconciliation_disables_and_restores_only_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory);cfg=configuration(path)
+            group=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
+                       endpoints=[dict(id='one',url='https://one.example/health')])
+            cfg=dict(cfg,targets=cfg['targets']+[group]);disabled=dict(cfg,targets=cfg['targets'][:-1]+[dict(group,enabled=False)])
+            client=Mock();pending=path/'pending';pending.write_bytes(b'keep')
+            monitor=Monitor(cfg,client)
+            try:
+                monitor.relocate(disabled,now=100)
+                self.assertEqual(probe(disabled['targets'][-1]),'standby')
+                self.assertEqual(monitor.config['targets'][0],cfg['targets'][0])
+            finally:monitor.close()
+            monitor=Monitor(disabled,client)
+            try:monitor.relocate(cfg,now=101)
+            finally:monitor.close()
+            monitor=Monitor(cfg,client)
+            try:self.assertEqual(pending.read_bytes(),b'keep')
+            finally:monitor.close()
+            client.call.assert_not_called()
+
     def test_group_needs_every_endpoint_and_retains_no_payload(self):
         target=dict(kind='https_health_group',endpoints=[dict(id=str(i),url=str(i)) for i in range(4)])
         for fault in (None,False,'unavailable','bad-json'):

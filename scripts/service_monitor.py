@@ -103,6 +103,8 @@ def scheduled_job(target):
 
 
 def https_group(target):
+    if target.get('enabled',True) is False:
+        return 'standby'
     # A fixed deployment's small endpoint set shares one observation/incident.
     # This does not turn an endpoint failure into a physical-host diagnosis.
     def check(endpoint):
@@ -298,7 +300,9 @@ class Monitor:
                 local_url(target['base_url'])
             elif target['kind']=='https_health_group':
                 entries=target.get('endpoints')
-                if (set(target)!={'id','resource_ref','kind','endpoints'}
+                if (not {'id','resource_ref','kind','endpoints'}<=set(target)
+                        or set(target)-{'id','resource_ref','kind','endpoints','enabled'}
+                        or type(target.get('enabled',True)) is not bool
                         or not isinstance(entries,list) or not 1<=len(entries)<=4):
                     raise ValueError('bounded explicit HTTPS endpoint group required')
                 ids=set();urls=set()

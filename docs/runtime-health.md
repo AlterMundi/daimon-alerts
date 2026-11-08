@@ -259,7 +259,7 @@ A healthy listener still does not establish delivery of a particular message.
 
 An explicitly configured `kind: https_health_group` observes up to four fixed
 public health endpoints from the receiving observer host. Its fields are exactly
-`id`, `resource_ref`, `kind` and `endpoints`; each endpoint has only an opaque
+`id`, `resource_ref`, `kind` and `endpoints`, plus optional boolean `enabled`; each endpoint has only an opaque
 `id` and its complete HTTPS `url` ending in `/health`. Credentials, query strings,
 fragments, duplicate endpoints and unbounded lists are refused. The total across
 all such groups in one observer is at most four; the existing 16-target limit
@@ -279,3 +279,12 @@ preserving producer authority, all original targets, journal, incidents and time
 Qualify the real endpoints and the subsequent periodic observer before claiming
 receiving adoption. Keep controlled fault tests separate from real outages;
 never power off a host or interrupt a child's service to test this adapter.
+
+To stop only the new group's future reads, select `enabled: false` through the
+existing explicit `--relocate-to` configuration reconciliation, preserving all
+target identities, other fields, authority and journal. It reports intentional
+standby without a request; retirement of an existing outage is not recovery.
+The same supported control re-enables the exact selected endpoints. Keep a
+compatible monitor with the group parser: a pre-group binary/config is not a
+valid rollback, and the relocation control does not remove fixed target IDs.
+Do not edit the DB binding, drop unrelated monitoring or restore an old journal.
