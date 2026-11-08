@@ -18,6 +18,33 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_scheduled_dependency_needs_actual_timer_and_ordered_pull_in(self):
+        target=dict(id='packages',resource_ref='host',kind='scheduled_job',scope='system',
+                    timer='daily.timer',trigger_unit='daily.service',unit='packages.service',
+                    max_age_seconds=93600,max_run_seconds=900)
+        with tempfile.TemporaryDirectory() as directory:
+            cfg=configuration(Path(directory));Monitor.validate(dict(cfg,targets=[target]))
+            for bad in [dict(target,trigger_unit=None),dict(target,trigger_unit='other.service'),
+                        dict(target,trigger_unit='daily.timer'),dict(target,timer='unrelated.timer')]:
+                with self.subTest(target=bad),self.assertRaises(ValueError):
+                    Monitor.validate(dict(cfg,targets=[bad]))
+        timer='LoadState=loaded\nActiveState=active\nUnitFileState=enabled\nTriggers=daily.service\n'
+        job='LoadState=loaded\nActiveState=inactive\nResult=success\nExecMainStatus=0\nExecMainExitTimestampMonotonic=9000000000\n'
+        trigger='LoadState=loaded\nWants=network.service packages.service\nAfter=packages.service network.service\n'
+        cases=[(timer,job,trigger,'healthy'),
+               (timer,job,trigger.replace('Wants=network.service packages.service','Wants=network.service'),'unit_inactive'),
+               (timer,job,trigger.replace('After=packages.service network.service','After=network.service'),'unit_inactive'),
+               (timer.replace('Triggers=daily.service','Triggers=other.service'),job,trigger,'unit_inactive'),
+               (timer,job,trigger.replace('LoadState=loaded','LoadState=not-found'),'unit_inactive'),
+               (timer,job.replace('Result=success','Result=exit-code').replace('Status=0','Status=1'),trigger,'health_unavailable'),
+               (timer,job.replace('9000000000','1000000000'),trigger,'health_unavailable'),
+               (timer,job,trigger.replace('Wants=','Requires='),'healthy')]
+        for t,j,s,expected in cases:
+            with self.subTest(expected=expected,t=t,j=j,s=s),patch('service_monitor.subprocess.run',
+                    side_effect=[Mock(returncode=0,stdout=t),Mock(returncode=0,stdout=j),Mock(returncode=0,stdout=s)]),\
+                 patch('service_monitor.Path.read_text',return_value='100000 0'):
+                self.assertEqual(probe(target),expected)
+
     def test_scheduled_job_distinguishes_disabled_failed_stale_and_running(self):
         target = dict(kind='scheduled_job', scope='user', timer='cleanup.timer',
                       unit='cleanup.service', max_age_seconds=7200, max_run_seconds=300)

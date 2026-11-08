@@ -69,7 +69,7 @@ def scheduled_job(target):
     command = ['systemctl'] + (['--user'] if target['scope'] == 'user' else [])
     def properties(unit):
         result = subprocess.run(command + ['show', unit,
-            '--property=LoadState,ActiveState,UnitFileState,Result,ExecMainStatus,ExecMainStartTimestampMonotonic,ExecMainExitTimestampMonotonic'],
+            '--property=LoadState,ActiveState,UnitFileState,Result,ExecMainStatus,ExecMainStartTimestampMonotonic,ExecMainExitTimestampMonotonic,Wants,Requires,After,Triggers'],
             capture_output=True, text=True, timeout=3)
         if result.returncode or len(result.stdout) > 4096:
             raise ValueError('bounded unit observation required')
@@ -79,6 +79,15 @@ def scheduled_job(target):
         if (timer.get('LoadState') != 'loaded' or timer.get('ActiveState') != 'active'
                 or timer.get('UnitFileState') != 'enabled' or job.get('LoadState') != 'loaded'):
             return 'unit_inactive'
+        if target.get('trigger_unit'):
+            trigger=properties(target['trigger_unit'])
+            # The timer's matching service must really pull in and wait for the
+            # observed dependency. A configured name alone proves no schedule.
+            dependencies=(trigger.get('Wants','')+' '+trigger.get('Requires','')).split()
+            if (target['trigger_unit'] not in timer.get('Triggers','').split()
+                    or trigger.get('LoadState')!='loaded' or target['unit'] not in dependencies
+                    or target['unit'] not in trigger.get('After','').split()):
+                return 'unit_inactive'
         uptime = float(Path('/proc/uptime').read_text().split()[0])
         if job.get('ActiveState') in ('active', 'activating'):
             start = int(job.get('ExecMainStartTimestampMonotonic', '0')) / 1e6
@@ -288,9 +297,11 @@ class Monitor:
                         or not 0 < target['full_avg60_percent'] <= 100):
                     raise ValueError('explicit enrollment registry and Incus required')
             elif target['kind'] == 'scheduled_job':
+                trigger=target.get('trigger_unit',target['unit'])
                 if (target.get('scope') not in ('user', 'system')
                         or not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service', target['unit'])
-                        or target['timer'] != target['unit'][:-8]+'.timer'
+                        or not isinstance(trigger,str) or not re.fullmatch(r'[A-Za-z0-9_.@:-]+\.service', trigger)
+                        or target['timer'] != trigger[:-8]+'.timer'
                         or type(target['max_age_seconds']) is not int
                         or not 60 <= target['max_age_seconds'] <= 172800
                         or type(target['max_run_seconds']) is not int
