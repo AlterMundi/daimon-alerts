@@ -256,3 +256,13 @@ cannot interpret dismissed. No acknowledgment, raw core database edit, source
 replay or new monitor is involved. The existing bounded attempt lifecycle keeps
 this terminal disposition for at least24hours before eligible pruning; durable
 service history follows its receiving retention contract.
+
+### Compatible Matrix reader recovery
+
+The Matrix probe validates the live native process gate, required reader roster,
+credential validity, authority epochs and wire support. A recovered selection
+retains its historical view/package fingerprints as provenance. Do not require
+those fingerprints to match a compatible replacement: the native startup recovery
+already authenticates its local binding and invalidates changed policy/contracts.
+A software update alone must not create a false reader outage or demand another
+whole-group selection. No inbox read, message retry or model action is involved.
