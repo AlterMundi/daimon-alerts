@@ -106,13 +106,13 @@ def inspect(config):
         client = LocalClient(Path(config['socket']), cfg, connection_observer=observer,
                              timeout_seconds=8, deadline_ns=time.monotonic_ns()+8_000_000_000)
         binding = dict(process=process, server=dict(cfg.expected_server),
-                       capability=cfg.capability.descriptor, runtime_id=cfg.runtime_id)
+                       capability=cfg.capability.descriptor, runtime_id=cfg.runtime_id, view='receiving')
         path = state / 'status-request.json'
         previous = json.loads(regular(path, uid=os.getuid())) if path.exists() else None
         if previous is not None and previous['binding'] == binding:
             request = previous['request']
         else:
-            request = client.prepare('runtime.status', {})
+            request = client.prepare('runtime.status', {'view':'receiving'})
             raw = json.dumps(dict(binding=binding, request=request)).encode()
             if len(raw) > 65536:
                 raise ValueError('bounded status request required')
@@ -121,7 +121,7 @@ def inspect(config):
             with os.fdopen(fd, 'wb') as stream:
                 stream.write(raw); stream.flush(); os.fsync(stream.fileno())
             os.replace(temporary, path)
-        if request['method'] != 'runtime.status' or request['params'] != {}:
+        if request['method'] != 'runtime.status' or request['params'] != {'view':'receiving'}:
             raise ValueError('status-only request required')
         response = client.send(request)
         if response.get('ok') is not True:
