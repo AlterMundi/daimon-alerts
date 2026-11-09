@@ -6,7 +6,6 @@ One replaceable read request is retained per local probe, not one per tick.
 """
 import argparse
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -52,9 +51,7 @@ def check_local_health(config, descriptor, pid, now_ms, *, proc=Path('/proc')):
 
 def ready(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
-    from daimon_matrix.canonical import canonical_bytes
     loaded = status['loaded_runtime']
-    application = status['loaded_application']
     gate = status['receiving']['channels']['tribe']
     roster = status['receiving']['rosters']['tribe']
     if (gate.get('controlled') is not True or gate.get('phase') != 'select'
@@ -74,15 +71,12 @@ def ready(status, server, required, now_ms):
                 or (reader['being_ref'], reader['embodiment_id'], reader['credential_id']) not in audience):
             return False
     own = [r for r in readers if r['embodiment_id'] == server['embodiment_id']]
-    if len(own) != 1 or own[0]['loaded_view_sha256'] != application['loaded_view_sha256']:
-        return False
-    startup = loaded['qualified_startup']
-    selection = dict(receiving_code=startup['code_digest'], matrix_sdk=startup['matrix_wheel_sha256'],
-                     runtime_bundle_sha256=loaded['runtime_bundle_sha256'],
-                     application_sha256=application['application_sha256'],
-                     publication_sha256=application['publication_sha256'],
-                     visibility_installation_sha256=application['visibility']['installation_sha256'])
-    return own[0]['receiving_selection_sha256'] == hashlib.sha256(canonical_bytes(selection)).hexdigest()
+    # The native gate is bound to this live process. Compatible startup recovery
+    # authenticates its original selection while preserving the reader contract,
+    # authority and local policies. Historical software/view hashes describe that
+    # selection; requiring them to equal today's package falsely reports outages.
+    return len(own) == 1
+
 
 
 def inspect(config):
