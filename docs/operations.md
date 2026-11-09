@@ -16,6 +16,19 @@ Keep actual values in private overlays; never commit them. Never reuse a produce
 credential for a browser or another being. Token revocation/replacement requires
 an Alerts-only process restart; it does not affect producer work or Telecodex.
 
+Choose the core `freshness_seconds` for the longest installed observation
+cadence, including the probe deadline and scheduler coalescing. For example, a
+finite observer scheduled 60 seconds after completion, with a 45-second service
+deadline and the default 60-second systemd timer accuracy, needs a window greater
+than 165 seconds. A 30-second window falsely reports stale between healthy runs.
+The CompAII receiving core uses 180 seconds after the 2026-11-09 reconciliation.
+Other installations must inspect their actual cadence rather than copy this value.
+An unavailable observer still becomes stale after that bounded window. This
+changes heartbeat freshness only: a current heartbeat never resolves pending
+producer work, unhealthy source state or a retained delivery outcome. Keep
+`retention_seconds >= freshness_seconds`. Restart only the independent Alerts
+core after changing its private configuration; retain database, outbox and grants.
+
 Install the selected executable and scripts under an immutable operator release
 directory, then atomically select `current`. The provided systemd user units are
 examples with resource limits. Install/enable only within the authorized receiving
