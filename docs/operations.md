@@ -266,3 +266,8 @@ those fingerprints to match a compatible replacement: the native startup recover
 already authenticates its local binding and invalidates changed policy/contracts.
 A software update alone must not create a false reader outage or demand another
 whole-group selection. No inbox read, message retry or model action is involved.
+
+Use the supported compact `runtime.status(view="receiving")` for this readiness
+probe. Full retained-history projection is unrelated to current reader health and
+must not consume its eight-second deadline. The view is part of the retained
+read-only token binding; it replaces one prior read token without growing a log.
