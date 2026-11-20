@@ -10,6 +10,21 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 class LocalHealthTests(unittest.TestCase):
+    def test_new_member_extends_protected_reader_vector(self):
+        original=[dict(being_ref='first',embodiment_id='first-body')]
+        newcomer=dict(being_ref='new',embodiment_id='new-body')
+        required=[['first','first-body']]
+        self.assertTrue(m.reader_coverage(original+[newcomer],required,original+[newcomer]))
+        self.assertFalse(m.reader_coverage(original,required,original+[newcomer]))
+        self.assertFalse(m.reader_coverage([newcomer],required,original+[newcomer]))
+
+    def test_unselected_sibling_is_not_a_distinct_being_requirement(self):
+        original=[dict(being_ref='first',embodiment_id='first-body')]
+        sibling=dict(being_ref='first',embodiment_id='archived-body')
+        self.assertTrue(m.reader_coverage(original,[['first','first-body']],original+[sibling]))
+        self.assertFalse(m.reader_coverage([sibling],[['first','first-body']],original+[sibling]))
+        self.assertFalse(m.reader_coverage(original+original,[['first','first-body']],original))
+
     def test_live_owned_listener(self):
         with socket.socket() as listener:
             listener.bind(('127.0.0.1', 0)); listener.listen()

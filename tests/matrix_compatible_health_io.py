@@ -25,6 +25,17 @@ class CompatibleHealthTests(unittest.TestCase):
     def test_compatible_local_recovery_keeps_historical_software_provenance(self):
         self.assertTrue(m.ready(self.status, self.server, self.required, 10))
 
+    def test_added_member_requires_its_reader_without_replacing_protected_bodies(self):
+        status=copy.deepcopy(self.status)
+        reader=dict(status['receiving']['channels']['tribe']['readers'][0],
+                    being_ref='new',embodiment_id='new-body',credential_id='new-credential')
+        status['receiving']['rosters']['tribe']['audience'].append(dict(
+            being_ref='new',embodiment_id='new-body',credential_id='new-credential'))
+        self.assertFalse(m.ready(status,self.server,self.required,10))
+        status['receiving']['channels']['tribe']['readers'].append(reader)
+        self.assertTrue(m.ready(status,self.server,self.required,10))
+        self.assertFalse(m.ready(status,self.server,self.required+[('being','protected-sibling')],10))
+
     def test_actual_readiness_requirements_still_refuse(self):
         changes = [lambda s: s['receiving']['channels']['tribe'].update(phase='revoke'),
                    lambda s: s['receiving']['channels']['tribe'].update(process_id=13),

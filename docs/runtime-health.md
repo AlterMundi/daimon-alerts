@@ -186,11 +186,26 @@ existing SDK and owner status grant. Its configuration contains `operator`
 application `socket`, owner-private `state`, and `required_readers` pairs of
 being/embodiment coordinates. Invoke it through that body's selected SDK Python;
 keep these local bindings out of public source. It authenticates the current
-application, compares the required reader vector, current credential validity,
+application, requires every protected reader and a reader for every distinct
+being in the current signed audience, then checks current credential validity,
 authority epochs, roster and own loaded application/software selection. It reads
 no inbox and wakes no model. Local reader readiness does not prove peer process
 availability, delivery, model attention or a human reading; retain those separately.
 Install the same local observation on each selected living receiver.
+Adding a new member must not invalidate a healthy extended vector merely because
+the configured protected vector is older. Conversely, omitting the new distinct
+being or a protected body still fails; an unselected sibling of an already covered
+being does not require reviving an archived embodiment.
+
+For a software-only replacement of an existing Matrix health adapter, use
+`service_monitor.py --config CURRENT --refresh-reader-to REPLACEMENT`. This
+extends the existing explicit target-reconciliation route: only
+`receiving_command` on existing unit targets can differ, and the replacement
+must pass its authenticated read first. The existing bounded reconciliation
+history supports lost-reply inspection. Incidents, pending versions and counters
+are unchanged; the next ordinary observation must resolve the same incident at
+a higher revision. Do not use physical relocation/retirement to close a reader
+incident merely while updating its diagnostic software.
 
 The adapter retains one replaceable read-only status request plus its lock. Exact
 status reads recompute live native state; no token per tick or report history is
@@ -288,3 +303,37 @@ The same supported control re-enables the exact selected endpoints. Keep a
 compatible monitor with the group parser: a pre-group binary/config is not a
 valid rollback, and the relocation control does not remove fixed target IDs.
 Do not edit the DB binding, drop unrelated monitoring or restore an old journal.
+# Reuse the service observer in an authorized heartbeat
+
+The existing finite `service_monitor.py --config PRIVATE_CONFIG
+--heartbeat-report` writes `heartbeat/heartbeat-report.json` under its existing private state
+directory after the ordinary observation. Select this option on the already
+installed observation command; it adds no timer, model, network request,
+acknowledgment or recovery operation. Existing journals and producer bindings are
+unchanged. Removing the option stops report production; after deselecting the
+consumer, its two fixed report/staging filenames and report directory can be retired without deleting
+the journal or its uncertain outbox.
+
+The report retains exact incident IDs/revisions, source times, resource references
+and safe incident text. `acceptance` distinguishes a pending local publication
+from a service-accepted revision. Resolution is a higher revision of the same
+incident, never an acknowledgment or invented recovery. At most32 entries/64KiB
+are projected, open incidents first; `more_incidents` explicitly signals omitted
+entries. Use the existing authenticated paginated incident API for the remainder.
+Neither truncation nor an unavailable observer establishes health.
+
+An explicitly selected existing heartbeat report source can compare `/incidents`,
+`/service_state` and `/more_incidents`, excluding the changing `/checked_at` clock
+from activation hashes. Check the report's observation time and the authenticated
+current incident before repair; this local projection is navigation, not fresh
+service truth or execution authority. An unavailable or stale source is unknown.
+This does not replace independent observer-freshness monitoring. Keep existing
+heartbeat resource bounds and global/lane controls, and select only actual
+human-authorized scoped repairs. Verify the producer's higher resolution revision
+and the attributed general-conversation return separately from report publication.
+
+For a constrained native reader, grant only the dedicated `heartbeat/` directory
+read-only through its existing named filesystem profile. Keep observer configuration,
+credentials and the parent journal outside that grant. A directory rule survives
+atomic file replacement; an inode-only rule on one report generation may not.
+Use the existing writable task work area for its bounded review cursor.
