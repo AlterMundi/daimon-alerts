@@ -105,6 +105,17 @@ def retain_failure(config, diagnostic, error):
         if diagnostic.get('refusal_code') in {'verification_failed', 'permission_denied',
                 'invalid_params', 'busy', 'deadline_exceeded'}:
             value['refusal_code'] = diagnostic['refusal_code']
+        error_type = type(error).__name__
+        if error_type in {'KeyError', 'ValueError', 'TypeError', 'AttributeError',
+                'BlockingIOError', 'TimeoutError', 'ConnectionRefusedError', 'FileNotFoundError',
+                'PermissionError', 'RuntimeError'}:
+            value['exception_type'] = error_type
+        if isinstance(error, KeyError) and len(error.args) == 1 and error.args[0] in {
+                'loaded_runtime', 'local_origin', 'process_id', 'receiving', 'channels',
+                'tribe', 'rosters', 'readers', 'audience', 'required_authority_epochs',
+                'authority_epochs', 'schema', 'being_ref', 'embodiment_id', 'credential_id',
+                'validity', 'wire_read', 'not_before_ms', 'not_after_ms'}:
+            value['contract_field'] = error.args[0]
         raw = json.dumps(value).encode()
         temporary = root/'probe-failure.tmp'
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
