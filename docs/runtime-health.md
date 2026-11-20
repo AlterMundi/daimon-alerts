@@ -337,3 +337,20 @@ read-only through its existing named filesystem profile. Keep observer configura
 credentials and the parent journal outside that grant. A directory rule survives
 atomic file replacement; an inode-only rule on one report generation may not.
 Use the existing writable task work area for its bounded review cursor.
+
+
+### Intermittent Matrix observation failures
+
+The existing authenticated Matrix probe retains one private `probe-failure.json`
+in its already configured probe state directory when an unexpected read fails.
+It records only observation time, a fixed failure classification, the failed
+stage and a recognized public refusal code when available. It never records
+exception text, credentials, paths, messages or a status payload. One fixed
+atomic staging file and one current record keep storage below8KiB; normal reads
+do not erase the last failure. The probe state owns their retention/removal.
+
+Inspect that dated record when diagnosing `observation_unreadable`; a later
+successful read alone does not explain or repair the earlier failure. This
+metadata is an operator diagnostic, not ordinary UI text or a new readiness
+state. Probe exit status, incident identity/history and the existing observer
+schedule remain unchanged. It adds no retry, service restart or model attention.

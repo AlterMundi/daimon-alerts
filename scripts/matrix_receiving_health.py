@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import stat
 import sys
 import time
 
@@ -84,17 +85,56 @@ def ready(status, server, required, now_ms):
     return len(own) == 1
 
 
-def inspect(config):
+def retain_failure(config, diagnostic, error):
+    """Keep one bounded private cause classification, never exception text."""
+    stages = {'sdk_import', 'status_authority', 'probe_state', 'peer_connect',
+        'status_request', 'status_send', 'response_authentication', 'listener_check',
+        'process_verify', 'reader_check'}
+    try:
+        root = Path(config['state'])
+        info = root.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            return
+        kind = ('probe_busy' if isinstance(error, BlockingIOError) else
+            'status_timeout' if isinstance(error, TimeoutError) else
+            'local_transport' if isinstance(error, OSError) else 'verification_failed')
+        value = dict(schema='dm.monitor.matrix-probe-failure/v1',
+            observed_at_ms=time.time_ns()//1_000_000, kind=kind,
+            stage=diagnostic.get('stage') if diagnostic.get('stage') in stages else 'unknown')
+        if diagnostic.get('refusal_code') in {'verification_failed', 'permission_denied',
+                'invalid_params', 'busy', 'deadline_exceeded'}:
+            value['refusal_code'] = diagnostic['refusal_code']
+        raw = json.dumps(value).encode()
+        temporary = root/'probe-failure.tmp'
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            opened = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid()
+                    or opened.st_nlink != 1 or opened.st_mode & 0o077):
+                return
+            stream.truncate(0)
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary, root/'probe-failure.json')
+    except (OSError, ValueError, TypeError, KeyError):
+        pass  # Diagnostics must not replace the original readiness failure.
+
+
+def inspect(config, diagnostic=None):
+    diagnostic = {} if diagnostic is None else diagnostic
+    diagnostic['stage'] = 'sdk_import'
     sys.path.insert(0, config['operator'])
     from clusterctl.owner_process import ConnectedProcessObserver
     from clusterctl.onboarding_release import regular
     from daimon_matrix.client import ClientConfig, LocalClient
     from daimon_matrix.operator_capabilities import host_capability_profile
+    diagnostic['stage'] = 'status_authority'
     root = Path(config['root'])
     profile = host_capability_profile('status')
     directory = root / profile['client_directory']
     cfg = ClientConfig.load(directory / profile['client_config_filename'],
                            bytearray(regular(directory / profile['client_key_filename'], uid=os.getuid())))
+    diagnostic['stage'] = 'probe_state'
     state = Path(config['state'])
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = state.lstat()
@@ -102,6 +142,7 @@ def inspect(config):
         raise ValueError('private probe state required')
     with (state / 'lock').open('a+b') as lock, ConnectedProcessObserver() as observer:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        diagnostic['stage'] = 'peer_connect'
         # Establish the actual peer before selecting the retained read token.
         with socket.socket(socket.AF_UNIX) as connection:
             connection.settimeout(2)
@@ -112,6 +153,7 @@ def inspect(config):
                              timeout_seconds=8, deadline_ns=time.monotonic_ns()+8_000_000_000)
         binding = dict(process=process, server=dict(cfg.expected_server),
                        capability=cfg.capability.descriptor, runtime_id=cfg.runtime_id, view='receiving')
+        diagnostic['stage'] = 'status_request'
         path = state / 'status-request.json'
         previous = json.loads(regular(path, uid=os.getuid())) if path.exists() else None
         if previous is not None and previous['binding'] == binding:
@@ -128,13 +170,21 @@ def inspect(config):
             os.replace(temporary, path)
         if request['method'] != 'runtime.status' or request['params'] != {'view':'receiving'}:
             raise ValueError('status-only request required')
+        diagnostic['stage'] = 'status_send'
         response = client.send(request)
+        diagnostic['stage'] = 'response_authentication'
         if response.get('ok') is not True:
+            failure = response.get('error')
+            if isinstance(failure, dict):
+                diagnostic['refusal_code'] = failure.get('code')
             raise ValueError('authenticated status unavailable')
         if response['result']['loaded_runtime']['process_id'] != process['pid']:
             raise ValueError('process changed')
+        diagnostic['stage'] = 'listener_check'
         check_local_health(config, cfg.capability.descriptor, process['pid'], time.time_ns()//1_000_000)
+        diagnostic['stage'] = 'process_verify'
         observer.verify()
+        diagnostic['stage'] = 'reader_check'
         return ready(response['result'], response['server'], config['required_readers'], time.time_ns()//1_000_000)
 
 
@@ -143,14 +193,16 @@ def main():
     parser.add_argument('--config', required=True, type=Path)
     args = parser.parse_args()
     os.umask(0o077)
+    config, diagnostic = {}, {}
     try:
         config = json.loads(args.config.read_text())
-        result = inspect(config)
+        result = inspect(config, diagnostic)
     except LocalHealthFailure as failure:
         print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v2', state=str(failure))))
         return 0
-    except Exception:
+    except Exception as error:
         # No daemon exception, private path, credential or source text escapes.
+        retain_failure(config, diagnostic, error)
         return 1
     print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v1', ready=result)))
     return 0
