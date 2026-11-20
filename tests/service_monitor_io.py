@@ -247,6 +247,44 @@ class Durable(unittest.TestCase):
         self.client.call.side_effect=call
         self.config=configuration(self.directory)
 
+    def test_reader_refresh_preserves_incident_pending_version_and_lost_reply(self):
+        target=dict(id='matrix',resource_ref='body',kind='unit',unit='matrix.service',
+                    receiving_command=['/old-reader'])
+        cfg=dict(self.config,targets=[target]);new=dict(cfg,targets=[dict(target,receiving_command=['/new-reader'])])
+        monitor=Monitor(cfg,self.client)
+        try:
+            monitor.transition(target,'matrix_reader_unavailable',10)
+            before=monitor.db.execute('SELECT content FROM incidents').fetchone()[0]
+            pending=monitor.db.execute('SELECT content FROM outbox').fetchall()
+        finally:monitor.close()
+        with patch('service_monitor.probe',return_value='healthy'):
+            self.assertFalse(relocate_monitor(cfg,new,self.client,reader_only=True)['incidents_changed'])
+        self.client.call.assert_not_called()
+        self.assertTrue(relocate_monitor(cfg,new,self.client,reader_only=True)['already_relocated'])
+        monitor=Monitor(new,self.client)
+        try:
+            self.assertEqual(monitor.db.execute('SELECT content FROM incidents').fetchone()[0],before)
+            self.assertEqual(monitor.db.execute('SELECT content FROM outbox').fetchall(),pending)
+            monitor.tick(lambda _:'healthy',now=11)
+            self.assertEqual(self.sent[-1]['incident_id'],json.loads(before)['incident_id'])
+            self.assertEqual(self.sent[-1]['processing_state'],'resolved')
+            self.assertGreater(self.sent[-1]['revision'],json.loads(before)['revision'])
+        finally:monitor.close()
+
+    def test_reader_refresh_refuses_changed_meaning_and_failed_new_reader(self):
+        target=dict(id='matrix',resource_ref='body',kind='unit',unit='matrix.service',
+                    receiving_command=['/old-reader'])
+        cfg=dict(self.config,targets=[target]);monitor=Monitor(cfg,self.client)
+        try:
+            with patch('service_monitor.probe',return_value='matrix_reader_unavailable'):
+                with self.assertRaises(ValueError):
+                    monitor.relocate(dict(cfg,targets=[dict(target,receiving_command=['/new-reader'])]),reader_only=True)
+            for field,value in [('resource_ref','different'),('unit','different.service')]:
+                changed=dict(target,receiving_command=['/new-reader']);changed[field]=value
+                with self.assertRaises(ValueError):monitor.relocate(dict(cfg,targets=[changed]),reader_only=True)
+            self.assertEqual(monitor.db.execute('SELECT value FROM binding').fetchone()[0],binding_digest(cfg))
+        finally:monitor.close()
+
     def test_heartbeat_report_preserves_incident_and_higher_revision_resolution(self):
         monitor=Monitor(self.config,self.client)
         try:

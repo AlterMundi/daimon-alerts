@@ -197,6 +197,16 @@ the configured protected vector is older. Conversely, omitting the new distinct
 being or a protected body still fails; an unselected sibling of an already covered
 being does not require reviving an archived embodiment.
 
+For a software-only replacement of an existing Matrix health adapter, use
+`service_monitor.py --config CURRENT --refresh-reader-to REPLACEMENT`. This
+extends the existing explicit target-reconciliation route: only
+`receiving_command` on existing unit targets can differ, and the replacement
+must pass its authenticated read first. The existing bounded reconciliation
+history supports lost-reply inspection. Incidents, pending versions and counters
+are unchanged; the next ordinary observation must resolve the same incident at
+a higher revision. Do not use physical relocation/retirement to close a reader
+incident merely while updating its diagnostic software.
+
 The adapter retains one replaceable read-only status request plus its lock. Exact
 status reads recompute live native state; no token per tick or report history is
 created. Its atomic temporary file is replaced on process/profile change. The

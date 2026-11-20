@@ -426,7 +426,7 @@ class Monitor:
         self.config = replacement
         return dict(added_targets=sorted(new.keys()-old.keys()), receiving_health_verified=False)
 
-    def relocate(self, replacement, now=None):
+    def relocate(self, replacement, now=None, *, reader_only=False):
         """Reconcile an explicit physical move, preserving exact pending revisions."""
         self.validate(replacement)
         if {k:v for k,v in self.config.items() if k != 'targets'} != {
@@ -442,6 +442,28 @@ class Monitor:
         changed = [k for k in old if old[k] != new[k]]
         if not changed:
             raise ValueError('explicit changed placement required')
+        if reader_only:
+            for key in changed:
+                if (old[key]['kind'] != 'unit' or 'receiving_command' not in old[key]
+                        or 'receiving_command' not in new[key]
+                        or {k:v for k,v in old[key].items() if k != 'receiving_command'} !=
+                           {k:v for k,v in new[key].items() if k != 'receiving_command'}):
+                    raise ValueError('reader refresh changes only the existing Matrix health adapter')
+                if probe(new[key]) != 'healthy':
+                    raise ValueError('replacement Matrix health adapter unavailable')
+            # Software refresh is not placement retirement or incident recovery.
+            # Keep pending incident versions and counters byte-for-byte. The
+            # next ordinary observation owns any real higher-revision resolution.
+            prior, selected = binding_digest(self.config), binding_digest(replacement)
+            with self.db:
+                self.db.execute('CREATE TABLE IF NOT EXISTS relocations(seq INTEGER PRIMARY KEY, prior TEXT, selected TEXT, content TEXT)')
+                self.db.execute('INSERT INTO relocations(prior,selected,content) VALUES(?,?,?)',
+                    (prior,selected,json.dumps(dict(reader_only=True,previous_targets=list(old.values()),
+                                                   receiving_targets=list(new.values())),sort_keys=True)))
+                self.db.execute('DELETE FROM relocations WHERE seq NOT IN (SELECT seq FROM relocations ORDER BY seq DESC LIMIT 32)')
+                self.db.execute('UPDATE binding SET value=? WHERE value=?',(selected,prior))
+            self.config=replacement
+            return dict(refreshed_readers=changed, receiving_health_verified=True, incidents_changed=False)
         now = int(time.time()) if now is None else now
         # Failure here leaves original publications and binding intact. A later
         # retry sends the retained exact projections, never fabricated recovery.
@@ -854,7 +876,7 @@ def enrollments(target):
     return targets
 
 
-def relocate_monitor(config, replacement, client=None, now=None):
+def relocate_monitor(config, replacement, client=None, now=None, *, reader_only=False):
     """Resume the same move after an acknowledged binding switch or lost reply."""
     if {k:v for k,v in config.items() if k != 'targets'} != {
             k:v for k,v in replacement.items() if k != 'targets'}:
@@ -866,11 +888,12 @@ def relocate_monitor(config, replacement, client=None, now=None):
         except BindingChanged:
             monitor = Monitor(replacement, client)
             table = monitor.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='relocations'").fetchone()
-            row = monitor.db.execute('SELECT prior,selected FROM relocations ORDER BY seq DESC LIMIT 1').fetchone() if table else None
-            if row != (binding_digest(config), binding_digest(replacement)):
+            row = monitor.db.execute('SELECT prior,selected,content FROM relocations ORDER BY seq DESC LIMIT 1').fetchone() if table else None
+            if (row is None or row[:2] != (binding_digest(config), binding_digest(replacement))
+                    or bool(json.loads(row[2]).get('reader_only',False)) != reader_only):
                 raise ValueError('retained relocation receipt required')
-            return dict(already_relocated=True, receiving_health_verified=False)
-        return monitor.relocate(replacement, now=now)
+            return dict(already_relocated=True, receiving_health_verified=False, reader_only=reader_only)
+        return monitor.relocate(replacement, now=now, reader_only=reader_only)
     finally:
         if monitor:
             monitor.close()
@@ -904,6 +927,8 @@ def main():
                         help='Explicitly archive one old container enrollment and resolve only its observations')
     action.add_argument('--relocate-to', type=Path, metavar='PRIVATE_CONFIG',
                         help='Explicitly reconcile changed physical targets, preserving the existing journal and authority')
+    action.add_argument('--refresh-reader-to', type=Path, metavar='PRIVATE_CONFIG',
+                        help='Select a healthy replacement Matrix health adapter without retiring its incident')
     action.add_argument('--retire-remote',metavar='NAME',
                         help='Retire one remote availability record, preserving exact pending publications')
     action.add_argument('--extend-to', type=Path, metavar='PRIVATE_CONFIG',
@@ -913,6 +938,9 @@ def main():
     monitor = None
     try:
         config = json.loads(private_text(args.config))
+        if args.refresh_reader_to:
+            print(json.dumps(relocate_monitor(config, json.loads(private_text(args.refresh_reader_to)),reader_only=True)))
+            return 0
         if args.extend_to:
             print(json.dumps(extend_monitor(config, json.loads(private_text(args.extend_to)))))
             return 0
