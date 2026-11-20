@@ -1,5 +1,9 @@
 import importlib.util
 import os
+import json
+import io
+import contextlib
+from unittest.mock import patch
 from pathlib import Path
 import socket
 import tempfile
@@ -47,5 +51,56 @@ class LocalHealthTests(unittest.TestCase):
     def test_no_nonlocal_or_inferred_listener(self):
         for listener in ({'host':'10.0.0.1','port':8732},{'host':'127.0.0.1','port':True}):
             with self.assertRaises(ValueError):m.check_local_health({'listener':listener},{},os.getpid(),0)
+
+
+class SafeFailureTests(unittest.TestCase):
+    def test_failure_is_bounded_redacted_and_replaced_not_appended(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            secret='private credential and source text'
+            m.retain_failure({'state':tmp}, {'stage':'status_send','refusal_code':secret},
+                TimeoutError(secret))
+            first=json.loads((root/'probe-failure.json').read_text())
+            self.assertEqual(first['kind'],'status_timeout')
+            self.assertEqual(first['stage'],'status_send')
+            self.assertNotIn(secret,(root/'probe-failure.json').read_text())
+            m.retain_failure({'state':tmp}, {'stage':'peer_connect'}, ConnectionRefusedError(secret))
+            second=json.loads((root/'probe-failure.json').read_text())
+            self.assertEqual(second['kind'],'local_transport')
+            self.assertEqual([p.name for p in root.iterdir()],['probe-failure.json'])
+            self.assertLess((root/'probe-failure.json').stat().st_size,4096)
+            self.assertEqual((root/'probe-failure.json').stat().st_mode & 0o777,0o600)
+
+    def test_untrusted_stage_and_unsafe_destination_are_not_disclosed_or_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            target=root/'untouched'
+            target.write_text('preserve')
+            (root/'probe-failure.tmp').symlink_to(target)
+            m.retain_failure({'state':tmp},{'stage':'private source'}, ValueError('private payload'))
+            self.assertEqual(target.read_text(),'preserve')
+            self.assertFalse((root/'probe-failure.json').exists())
+            (root/'probe-failure.tmp').unlink()
+            root.chmod(0o755)
+            m.retain_failure({'state':tmp},{'stage':'status_send'},ValueError('private payload'))
+            self.assertFalse((root/'probe-failure.json').exists())
+
+    def test_main_keeps_existing_failure_exit_without_printing_private_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            config=root/'config.json'
+            config.write_text(json.dumps({'state':tmp}))
+            def failed(_config, diagnostic):
+                diagnostic['stage']='response_authentication'
+                diagnostic['refusal_code']='verification_failed'
+                raise ValueError('private payload')
+            out=io.StringIO()
+            with patch.object(m,'inspect',failed), patch.object(m.sys,'argv',
+                    ['probe','--config',str(config)]), contextlib.redirect_stdout(out):
+                self.assertEqual(m.main(),1)
+            self.assertEqual(out.getvalue(),'')
+            observed=json.loads((root/'probe-failure.json').read_text())
+            self.assertEqual(observed['refusal_code'],'verification_failed')
+            self.assertEqual(observed['stage'],'response_authentication')
 
 if __name__=='__main__':unittest.main()
