@@ -298,7 +298,7 @@ class Durable(unittest.TestCase):
             self.assertEqual(resolved['incidents'][0]['incident_id'],incident)
             self.assertGreater(resolved['incidents'][0]['revision'],opened['incidents'][0]['revision'])
             self.assertEqual(resolved['incidents'][0]['processing_state'],'resolved')
-            path=Path(self.config['state_dir'])/'heartbeat-report.json'
+            path=Path(self.config['state_dir'])/'heartbeat'/'heartbeat-report.json'
             self.assertEqual(json.loads(path.read_text()),resolved)
             self.assertEqual(path.stat().st_mode&0o777,0o600)
             self.assertFalse(path.with_suffix('.json.pending').exists())
@@ -334,7 +334,7 @@ class Durable(unittest.TestCase):
             report=monitor.heartbeat_report()
             self.assertTrue(report['more_incidents'])
             self.assertEqual(len(report['incidents']),32)
-            directory=Path(self.config['state_dir'])
+            directory=Path(self.config['state_dir'])/'heartbeat'
             self.assertLess((directory/'heartbeat-report.json').stat().st_size,65536)
             foreign=self.directory/'preserved';foreign.write_bytes(b'untouched')
             (directory/'heartbeat-report.json.pending').symlink_to(foreign)

@@ -306,12 +306,12 @@ Do not edit the DB binding, drop unrelated monitoring or restore an old journal.
 # Reuse the service observer in an authorized heartbeat
 
 The existing finite `service_monitor.py --config PRIVATE_CONFIG
---heartbeat-report` writes `heartbeat-report.json` in its existing private state
+--heartbeat-report` writes `heartbeat/heartbeat-report.json` under its existing private state
 directory after the ordinary observation. Select this option on the already
 installed observation command; it adds no timer, model, network request,
 acknowledgment or recovery operation. Existing journals and producer bindings are
 unchanged. Removing the option stops report production; after deselecting the
-consumer, its two fixed report/staging filenames can be retired without deleting
+consumer, its two fixed report/staging filenames and report directory can be retired without deleting
 the journal or its uncertain outbox.
 
 The report retains exact incident IDs/revisions, source times, resource references
@@ -331,3 +331,9 @@ This does not replace independent observer-freshness monitoring. Keep existing
 heartbeat resource bounds and global/lane controls, and select only actual
 human-authorized scoped repairs. Verify the producer's higher resolution revision
 and the attributed general-conversation return separately from report publication.
+
+For a constrained native reader, grant only the dedicated `heartbeat/` directory
+read-only through its existing named filesystem profile. Keep observer configuration,
+credentials and the parent journal outside that grant. A directory rule survives
+atomic file replacement; an inode-only rule on one report generation may not.
+Use the existing writable task work area for its bounded review cursor.

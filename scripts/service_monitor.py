@@ -620,7 +620,15 @@ class Monitor:
         raw = (json.dumps(report, sort_keys=True) + '\n').encode()
         if len(raw) > 65536:
             raise ValueError('bounded heartbeat report required')
-        directory = Path(self.config['state_dir'])
+        # Keep the model-readable projection separate from the private journal
+        # and configuration. A reader can grant this directory read-only while
+        # atomic replacement keeps producing fresh files beneath that rule.
+        directory = Path(self.config['state_dir']) / 'heartbeat'
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            raise ValueError('owner-private report directory required')
         pending = directory / 'heartbeat-report.json.pending'
         destination = directory / 'heartbeat-report.json'
         fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
