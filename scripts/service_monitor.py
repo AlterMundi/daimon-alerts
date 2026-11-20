@@ -565,6 +565,65 @@ class Monitor:
             with self.db:
                 self.db.execute('DELETE FROM outbox WHERE seq=?', (seq,))
 
+    def heartbeat_report(self):
+        """Project retained incidents for an explicitly selected owner reader.
+
+        This is navigation, not recovery authority or an acknowledgment. Keep
+        exact incident revisions and acceptance uncertainty; never expose probe
+        commands, endpoints, credentials or the rest of the private config.
+        """
+        fields = ('producer_id', 'incident_id', 'revision', 'operation_id',
+                  'resource_ref', 'phase', 'problem_code', 'processing_state',
+                  'severity', 'source_at', 'updated_at', 'summary', 'action',
+                  'work_preserved')
+        rows = self.db.execute("SELECT content FROM incidents ORDER BY "
+            "json_extract(content,'$.processing_state')='open' DESC, "
+            "json_extract(content,'$.updated_at') DESC,id LIMIT 33").fetchall()
+        incidents = []
+        for (raw,) in rows[:32]:
+            value = json.loads(raw)
+            pending = self.db.execute("SELECT 1 FROM outbox WHERE "
+                "json_extract(content,'$.incident_id')=? AND "
+                "json_extract(content,'$.revision')<=? LIMIT 1",
+                (value['incident_id'], value['revision'])).fetchone()
+            incidents.append({**{key: value[key] for key in fields},
+                              'acceptance': 'pending' if pending else 'accepted'})
+        status = self.db.execute('SELECT value FROM status').fetchone()
+        status = json.loads(status[0]) if status else {}
+        report = dict(schema='daimon-alerts.heartbeat-report/v1',
+            producer_id=self.config['producer_id'],
+            checked_at=status.get('checked_at'),
+            service_state=status.get('service_state', 'unobserved'),
+            incidents=incidents, more_incidents=len(rows) > 32)
+        raw = (json.dumps(report, sort_keys=True) + '\n').encode()
+        if len(raw) > 65536:
+            raise ValueError('bounded heartbeat report required')
+        directory = Path(self.config['state_dir'])
+        pending = directory / 'heartbeat-report.json.pending'
+        destination = directory / 'heartbeat-report.json'
+        fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_nlink != 1 or info.st_mode & 0o077):
+                raise ValueError('owner-private heartbeat report required')
+            os.ftruncate(fd, 0)
+            with os.fdopen(fd, 'wb') as stream:
+                fd = -1
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(pending, destination)
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        finally:
+            if fd != -1:
+                os.close(fd)
+        return report
+
     def transition(self, target, reason, now):
         identifier(target['id'])
         if reason not in REASONS:
@@ -838,6 +897,8 @@ def extend_monitor(config, replacement, client=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--heartbeat-report', action='store_true',
+                        help='Write one bounded owner-private incident report after the ordinary observation')
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--retire-enrollment', metavar='NAME',
                         help='Explicitly archive one old container enrollment and resolve only its observations')
@@ -866,6 +927,8 @@ def main():
             print(json.dumps(monitor.retire_enrollment(args.retire_enrollment)))
             return 0
         result = monitor.tick()
+        if args.heartbeat_report:
+            monitor.heartbeat_report()
         print(json.dumps(result))
         return 0 if result['service_state'] == 'available' else 2
     except (OSError, ValueError, KeyError, TypeError, Unavailable):

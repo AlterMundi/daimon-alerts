@@ -288,3 +288,31 @@ The same supported control re-enables the exact selected endpoints. Keep a
 compatible monitor with the group parser: a pre-group binary/config is not a
 valid rollback, and the relocation control does not remove fixed target IDs.
 Do not edit the DB binding, drop unrelated monitoring or restore an old journal.
+# Reuse the service observer in an authorized heartbeat
+
+The existing finite `service_monitor.py --config PRIVATE_CONFIG
+--heartbeat-report` writes `heartbeat-report.json` in its existing private state
+directory after the ordinary observation. Select this option on the already
+installed observation command; it adds no timer, model, network request,
+acknowledgment or recovery operation. Existing journals and producer bindings are
+unchanged. Removing the option stops report production; after deselecting the
+consumer, its two fixed report/staging filenames can be retired without deleting
+the journal or its uncertain outbox.
+
+The report retains exact incident IDs/revisions, source times, resource references
+and safe incident text. `acceptance` distinguishes a pending local publication
+from a service-accepted revision. Resolution is a higher revision of the same
+incident, never an acknowledgment or invented recovery. At most32 entries/64KiB
+are projected, open incidents first; `more_incidents` explicitly signals omitted
+entries. Use the existing authenticated paginated incident API for the remainder.
+Neither truncation nor an unavailable observer establishes health.
+
+An explicitly selected existing heartbeat report source can compare `/incidents`,
+`/service_state` and `/more_incidents`, excluding the changing `/checked_at` clock
+from activation hashes. Check the report's observation time and the authenticated
+current incident before repair; this local projection is navigation, not fresh
+service truth or execution authority. An unavailable or stale source is unknown.
+This does not replace independent observer-freshness monitoring. Keep existing
+heartbeat resource bounds and global/lane controls, and select only actual
+human-authorized scoped repairs. Verify the producer's higher resolution revision
+and the attributed general-conversation return separately from report publication.

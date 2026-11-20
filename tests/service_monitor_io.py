@@ -247,6 +247,63 @@ class Durable(unittest.TestCase):
         self.client.call.side_effect=call
         self.config=configuration(self.directory)
 
+    def test_heartbeat_report_preserves_incident_and_higher_revision_resolution(self):
+        monitor=Monitor(self.config,self.client)
+        try:
+            monitor.tick(lambda _:'extension_disconnected',now=10)
+            opened=monitor.heartbeat_report()
+            self.assertEqual(opened['incidents'][0]['acceptance'],'accepted')
+            self.assertEqual(opened['incidents'][0]['processing_state'],'open')
+            incident=opened['incidents'][0]['incident_id']
+            monitor.tick(lambda _:'healthy',now=11)
+            resolved=monitor.heartbeat_report()
+            self.assertEqual(resolved['incidents'][0]['incident_id'],incident)
+            self.assertGreater(resolved['incidents'][0]['revision'],opened['incidents'][0]['revision'])
+            self.assertEqual(resolved['incidents'][0]['processing_state'],'resolved')
+            path=Path(self.config['state_dir'])/'heartbeat-report.json'
+            self.assertEqual(json.loads(path.read_text()),resolved)
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+            self.assertFalse(path.with_suffix('.json.pending').exists())
+            self.assertNotIn(self.config['token_file'],path.read_text())
+            self.assertNotIn('base_url',path.read_text())
+            self.assertEqual(len(self.sent),2) # Reporting emits no network call.
+        finally:monitor.close()
+
+    def test_heartbeat_report_keeps_pending_acceptance_and_restarts_without_replay(self):
+        monitor=Monitor(self.config,self.client)
+        try:
+            monitor.transition(self.config['targets'][0],'extension_disconnected',10)
+            before=monitor.db.execute('SELECT content FROM outbox').fetchone()[0]
+            report=monitor.heartbeat_report()
+            self.assertEqual(report['incidents'][0]['acceptance'],'pending')
+            self.assertEqual(report['service_state'],'unobserved')
+            self.assertEqual(monitor.db.execute('SELECT content FROM outbox').fetchone()[0],before)
+        finally:monitor.close()
+        monitor=Monitor(self.config,self.client)
+        try:
+            self.assertEqual(monitor.heartbeat_report(),report)
+            self.client.call.assert_not_called()
+            monitor.flush()
+            self.assertEqual(monitor.heartbeat_report()['incidents'][0]['acceptance'],'accepted')
+        finally:monitor.close()
+
+    def test_heartbeat_report_bounds_output_and_refuses_pending_file_alias(self):
+        monitor=Monitor(self.config,self.client)
+        try:
+            for index in range(40):
+                monitor.transition(dict(self.config['targets'][0],id='service'+str(index)),
+                                   'extension_disconnected',10+index)
+            report=monitor.heartbeat_report()
+            self.assertTrue(report['more_incidents'])
+            self.assertEqual(len(report['incidents']),32)
+            directory=Path(self.config['state_dir'])
+            self.assertLess((directory/'heartbeat-report.json').stat().st_size,65536)
+            foreign=self.directory/'preserved';foreign.write_bytes(b'untouched')
+            (directory/'heartbeat-report.json.pending').symlink_to(foreign)
+            with self.assertRaises(OSError):monitor.heartbeat_report()
+            self.assertEqual(foreign.read_bytes(),b'untouched')
+        finally:monitor.close()
+
     def test_failure_resolution_recurrence_and_unknown_are_distinct(self):
         monitor=Monitor(self.config,self.client)
         try:
