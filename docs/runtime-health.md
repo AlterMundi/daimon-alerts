@@ -354,4 +354,11 @@ Inspect that dated record when diagnosing `observation_unreadable`; a later
 successful read alone does not explain or repair the earlier failure. This
 metadata is an operator diagnostic, not ordinary UI text or a new readiness
 state. Probe exit status, incident identity/history and the existing observer
-schedule remain unchanged. It adds no retry, service restart or model attention.
+schedule remain unchanged. The probe recognizes the native typed roster-unavailable response, which has no
+`audience` field. That response is unavailable, not malformed JSON. Only a native
+`reader_roster_unavailable` marked `retryable=true` permits one additional
+read-only status request through the same client and original eight-second
+absolute deadline. A persistent/invalid roster, changed process, bad authentication
+or invalid reader remains unavailable; no check is weakened. The private record
+retains that observed roster error, retryability and bounded-read outcome.
+This adds no service restart, input replay, provider request or model attention.
