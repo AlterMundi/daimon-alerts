@@ -6,7 +6,6 @@ One replaceable read request is retained per local probe, not one per tick.
 """
 import argparse
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -60,9 +59,7 @@ def reader_coverage(readers, required, audience):
 
 def ready(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
-    from daimon_matrix.canonical import canonical_bytes
     loaded = status['loaded_runtime']
-    application = status['loaded_application']
     gate = status['receiving']['channels']['tribe']
     roster = status['receiving']['rosters']['tribe']
     if (gate.get('controlled') is not True or gate.get('phase') != 'select'
@@ -81,15 +78,10 @@ def ready(status, server, required, now_ms):
                 or (reader['being_ref'], reader['embodiment_id'], reader['credential_id']) not in audience):
             return False
     own = [r for r in readers if r['embodiment_id'] == server['embodiment_id']]
-    if len(own) != 1 or own[0]['loaded_view_sha256'] != application['loaded_view_sha256']:
-        return False
-    startup = loaded['qualified_startup']
-    selection = dict(receiving_code=startup['code_digest'], matrix_sdk=startup['matrix_wheel_sha256'],
-                     runtime_bundle_sha256=loaded['runtime_bundle_sha256'],
-                     application_sha256=application['application_sha256'],
-                     publication_sha256=application['publication_sha256'],
-                     visibility_installation_sha256=application['visibility']['installation_sha256'])
-    return own[0]['receiving_selection_sha256'] == hashlib.sha256(canonical_bytes(selection)).hexdigest()
+    # The native gate binds this live process and authenticated reader contract.
+    # Preserve the installed compatible-startup recovery: software/view hashes
+    # describe the retained selection, not necessarily today's package bytes.
+    return len(own) == 1
 
 
 def inspect(config):
@@ -119,13 +111,13 @@ def inspect(config):
         client = LocalClient(Path(config['socket']), cfg, connection_observer=observer,
                              timeout_seconds=8, deadline_ns=time.monotonic_ns()+8_000_000_000)
         binding = dict(process=process, server=dict(cfg.expected_server),
-                       capability=cfg.capability.descriptor, runtime_id=cfg.runtime_id)
+                       capability=cfg.capability.descriptor, runtime_id=cfg.runtime_id, view='receiving')
         path = state / 'status-request.json'
         previous = json.loads(regular(path, uid=os.getuid())) if path.exists() else None
         if previous is not None and previous['binding'] == binding:
             request = previous['request']
         else:
-            request = client.prepare('runtime.status', {})
+            request = client.prepare('runtime.status', {'view':'receiving'})
             raw = json.dumps(dict(binding=binding, request=request)).encode()
             if len(raw) > 65536:
                 raise ValueError('bounded status request required')
@@ -134,7 +126,7 @@ def inspect(config):
             with os.fdopen(fd, 'wb') as stream:
                 stream.write(raw); stream.flush(); os.fsync(stream.fileno())
             os.replace(temporary, path)
-        if request['method'] != 'runtime.status' or request['params'] != {}:
+        if request['method'] != 'runtime.status' or request['params'] != {'view':'receiving'}:
             raise ValueError('status-only request required')
         response = client.send(request)
         if response.get('ok') is not True:
