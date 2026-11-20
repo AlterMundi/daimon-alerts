@@ -1,6 +1,7 @@
 """Once-only owner action, real producer journal and exact acceptance recovery."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -50,7 +51,8 @@ class Recovery(unittest.TestCase):
         self.assertEqual(receipt['resolution_revision'], 2)
         self.assertEqual(receipt['incident_id'], self.original['incident_id'])
         self.assertEqual(self.run.call_count, 2)
-        self.assertEqual(self.run.call_args.args[0], ['systemctl', 'start', 'fixture-matrix.service'])
+        prefix = ['sudo', '-n', '--'] if os.geteuid() != 0 else []
+        self.assertEqual(self.run.call_args.args[0], prefix + ['systemctl', 'start', 'fixture-matrix.service'])
         with self.assertRaises(Refused):
             self.act()
         self.assertEqual(self.run.call_count, 2)

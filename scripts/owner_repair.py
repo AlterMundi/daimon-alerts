@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sqlite3
@@ -80,7 +81,10 @@ def recover(monitor, selection, raw, inspect=False, run=subprocess.run, check=pr
                                (target['id'], json.dumps(prior, sort_keys=True)))
         if hold.exists() or hold.is_symlink():
             raise Refused('maintenance hold')
-        started = run(command + ['start', target['unit']], capture_output=True, text=True, timeout=3)
+        # Reuse the operator's existing noninteractive sudo route for a system
+        # service. No polkit prompt or new grant is installed by the adapter.
+        start = (['sudo', '-n', '--'] if selection['scope'] == 'system' and os.geteuid() != 0 else [])
+        started = run(start + command + ['start', target['unit']], capture_output=True, text=True, timeout=3)
         if started.returncode:
             raise Refused('service recovery unconfirmed; inspect original input')
     # The real authenticated reader probe decides recovery, not process startup.
