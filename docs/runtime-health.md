@@ -375,7 +375,10 @@ The private operator selection contains `enabled: true`, an existing `target_id`
 its exact Matrix `unit` and `scope`, and an absolute `hold_file`. Select only the
 model-free Matrix service with its existing authenticated `receiving_command`,
 never the Codex/harness service. A present hold file prevents action. Existing
-systemd restrictions still apply. The App's fixed command is:
+systemd restrictions still apply. For a system unit invoked by a non-root owner,
+the fixed start uses the existing noninteractive `sudo -n -- systemctl` route.
+It installs no sudo/polkit grant and never prompts; missing access stays
+unconfirmed for operator recovery. User units use their existing user manager. The App's fixed command is:
 
 ```text
 python3 RELEASE/scripts/owner_repair.py --config PRIVATE_OBSERVER_CONFIG --selection PRIVATE_SELECTION
