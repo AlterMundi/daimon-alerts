@@ -71,6 +71,18 @@ class SafeFailureTests(unittest.TestCase):
             self.assertLess((root/'probe-failure.json').stat().st_size,4096)
             self.assertEqual((root/'probe-failure.json').stat().st_mode & 0o777,0o600)
 
+    def test_contract_shape_failure_records_only_allowlisted_field_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            m.retain_failure({'state':tmp},{'stage':'reader_check'},KeyError('rosters'))
+            value=json.loads((root/'probe-failure.json').read_text())
+            self.assertEqual(value['exception_type'],'KeyError')
+            self.assertEqual(value['contract_field'],'rosters')
+            m.retain_failure({'state':tmp},{'stage':'reader_check'},KeyError('private payload'))
+            value=json.loads((root/'probe-failure.json').read_text())
+            self.assertNotIn('contract_field',value)
+            self.assertNotIn('private payload',(root/'probe-failure.json').read_text())
+
     def test_untrusted_stage_and_unsafe_destination_are_not_disclosed_or_followed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)

@@ -344,7 +344,8 @@ Use the existing writable task work area for its bounded review cursor.
 The existing authenticated Matrix probe retains one private `probe-failure.json`
 in its already configured probe state directory when an unexpected read fails.
 It records only observation time, a fixed failure classification, the failed
-stage and a recognized public refusal code when available. It never records
+stage, an allowlisted exception type/contract field and a recognized public refusal
+code when available. It never records
 exception text, credentials, paths, messages or a status payload. One fixed
 atomic staging file and one current record keep storage below8KiB; normal reads
 do not erase the last failure. The probe state owns their retention/removal.
