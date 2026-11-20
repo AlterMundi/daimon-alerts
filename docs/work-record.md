@@ -417,3 +417,12 @@ UI regression covers both naming generations, other reporters and retained
 acknowledgment semantics. All three HTTPS assets match the committed JavaScript;
 health200 and anonymous Alerts401 verified. Native listener PIDs unchanged.
 This UI change neither recaptures sources nor resolves capture incidents.
+
+2026-11-09: Corrected the existing CompAII receiving core's heartbeat freshness
+from30s to180s after inspecting the installed Beacon60s post-completion timer,
+45s probe deadline and default60s timer accuracy. Only the independent core
+restarted; existing observer schedules, producer work, grants, retention and
+native listener stayed unchanged. Actual authenticated status reports all eight
+observers fresh while retaining the genuine DMK worker_stalled source and all
+five open incidents. This is freshness reconciliation, not producer recovery.
+Owning DMK/Beacon/Matrix/children recovery requests remain separately unfinished.
