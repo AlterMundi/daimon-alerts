@@ -58,6 +58,17 @@ def reader_coverage(readers, required, audience):
             and {r['being_ref'] for r in audience} <= {row[0] for row in coordinates})
 
 
+
+def roster_unavailable(status):
+    """Recognize only the native public unavailable contract, not malformed data."""
+    roster = status.get('receiving', {}).get('rosters', {}).get('tribe', {})
+    if (isinstance(roster, dict) and set(roster) == {'schema', 'error', 'retryable'}
+            and roster['schema'] == 'dm.runtime.tribe-roster-unavailable/v1'
+            and roster['error'] in {'reader_roster_unavailable', 'reader_roster_invalid'}
+            and type(roster['retryable']) is bool):
+        return roster
+    return None
+
 def ready(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
     loaded = status['loaded_runtime']
@@ -65,6 +76,8 @@ def ready(status, server, required, now_ms):
     roster = status['receiving']['rosters']['tribe']
     if (gate.get('controlled') is not True or gate.get('phase') != 'select'
             or loaded['local_origin'] != server or gate['process_id'] != loaded['process_id']):
+        return False
+    if roster_unavailable(status) is not None:
         return False
     readers = gate['readers']
     if not reader_coverage(readers, required, roster['audience']):
@@ -116,6 +129,14 @@ def retain_failure(config, diagnostic, error):
                 'authority_epochs', 'schema', 'being_ref', 'embodiment_id', 'credential_id',
                 'validity', 'wire_read', 'not_before_ms', 'not_after_ms'}:
             value['contract_field'] = error.args[0]
+        if diagnostic.get('roster_error') in {'reader_roster_unavailable', 'reader_roster_invalid'}:
+            value['roster_error'] = diagnostic['roster_error']
+            if type(diagnostic.get('retryable')) is bool:
+                value['retryable'] = diagnostic['retryable']
+            if diagnostic.get('status_reads') in (1, 2):
+                value['status_reads'] = diagnostic['status_reads']
+            if type(diagnostic.get('recovered_within_read')) is bool:
+                value['recovered_within_read'] = diagnostic['recovered_within_read']
         raw = json.dumps(value).encode()
         temporary = root/'probe-failure.tmp'
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -129,6 +150,34 @@ def retain_failure(config, diagnostic, error):
         os.replace(temporary, root/'probe-failure.json')
     except (OSError, ValueError, TypeError, KeyError):
         pass  # Diagnostics must not replace the original readiness failure.
+
+
+def read_status(client, request, process, diagnostic):
+    for attempt in range(2):
+        diagnostic['stage'] = 'status_send'
+        response = client.send(request)
+        diagnostic['stage'] = 'response_authentication'
+        if response.get('ok') is not True:
+            failure = response.get('error')
+            if isinstance(failure, dict):
+                diagnostic['refusal_code'] = failure.get('code')
+            raise ValueError('authenticated status unavailable')
+        if response['result']['loaded_runtime']['process_id'] != process['pid']:
+            raise ValueError('process changed')
+        unavailable = roster_unavailable(response['result'])
+        if unavailable is None:
+            break
+        diagnostic.update(stage='reader_check', roster_error=unavailable['error'],
+            retryable=unavailable['retryable'], status_reads=attempt+1,
+            recovered_within_read=False)
+        if (attempt == 0 and unavailable['error'] == 'reader_roster_unavailable'
+                and unavailable['retryable'] is True):
+            # The same client keeps its original absolute eight-second
+            # deadline. Repeat only this authenticated read, never input,
+            # a native action, service control or provider/model request.
+            continue
+        break
+    return response, attempt+1
 
 
 def inspect(config, diagnostic=None):
@@ -181,22 +230,18 @@ def inspect(config, diagnostic=None):
             os.replace(temporary, path)
         if request['method'] != 'runtime.status' or request['params'] != {'view':'receiving'}:
             raise ValueError('status-only request required')
-        diagnostic['stage'] = 'status_send'
-        response = client.send(request)
-        diagnostic['stage'] = 'response_authentication'
-        if response.get('ok') is not True:
-            failure = response.get('error')
-            if isinstance(failure, dict):
-                diagnostic['refusal_code'] = failure.get('code')
-            raise ValueError('authenticated status unavailable')
-        if response['result']['loaded_runtime']['process_id'] != process['pid']:
-            raise ValueError('process changed')
+        response, status_reads = read_status(client, request, process, diagnostic)
         diagnostic['stage'] = 'listener_check'
         check_local_health(config, cfg.capability.descriptor, process['pid'], time.time_ns()//1_000_000)
         diagnostic['stage'] = 'process_verify'
         observer.verify()
         diagnostic['stage'] = 'reader_check'
-        return ready(response['result'], response['server'], config['required_readers'], time.time_ns()//1_000_000)
+        result = ready(response['result'], response['server'], config['required_readers'], time.time_ns()//1_000_000)
+        if 'roster_error' in diagnostic:
+            diagnostic['status_reads'] = status_reads
+            diagnostic['recovered_within_read'] = result
+            retain_failure(config, diagnostic, ValueError())
+        return result
 
 
 def main():

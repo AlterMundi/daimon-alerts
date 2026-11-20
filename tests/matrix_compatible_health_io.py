@@ -51,4 +51,52 @@ class CompatibleHealthTests(unittest.TestCase):
         self.assertFalse(m.ready(self.status,self.server,self.required+[('missing','body2')],10))
 
 
+
+class UnavailableRosterTests(unittest.TestCase):
+    def setUp(self):
+        CompatibleHealthTests.setUp(self)
+
+    def unavailable(self,retryable=True,error='reader_roster_unavailable'):
+        status=copy.deepcopy(self.status)
+        status['receiving']['rosters']['tribe']=dict(
+            schema='dm.runtime.tribe-roster-unavailable/v1',error=error,retryable=retryable)
+        return status
+
+    def test_native_unavailable_contract_is_not_an_audience_key_error(self):
+        for retryable in (False,True):
+            self.assertFalse(m.ready(self.unavailable(retryable),self.server,self.required,10))
+
+    def test_retryable_status_uses_same_read_request_at_most_twice(self):
+        for next_status in (self.status,self.unavailable()):
+            replies=[self.unavailable(),next_status]
+            calls=[]
+            request={'method':'runtime.status','params':{'view':'receiving'}}
+            class Client:
+                def send(_,value):
+                    self.assertIs(value,request)
+                    calls.append(value)
+                    return dict(ok=True,result=replies[len(calls)-1],server=self.server)
+            diagnostic={}
+            response,count=m.read_status(Client(),request,{'pid':12},diagnostic)
+            self.assertEqual(count,2)
+            self.assertEqual(len(calls),2)
+            self.assertEqual(m.ready(response['result'],self.server,self.required,10),next_status==self.status)
+
+    def test_permanent_refusal_and_bad_auth_or_process_never_retry(self):
+        for change in ('permanent','invalid','auth','process'):
+            status=self.unavailable(False)
+            if change=='invalid':status=self.unavailable(True,error='reader_roster_invalid')
+            if change=='process':status['loaded_runtime']['process_id']=99
+            calls=[]
+            class Client:
+                def send(_,request):
+                    calls.append(request)
+                    return dict(ok=change!='auth',result=status,server=self.server)
+            if change in ('auth','process'):
+                with self.assertRaises(ValueError):m.read_status(Client(),{}, {'pid':12},{})
+            else:
+                _,count=m.read_status(Client(),{}, {'pid':12},{})
+                self.assertEqual(count,1)
+            self.assertEqual(len(calls),1)
+
 if __name__ == '__main__': unittest.main()
