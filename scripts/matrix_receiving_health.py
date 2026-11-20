@@ -50,6 +50,14 @@ def check_local_health(config, descriptor, pid, now_ms, *, proc=Path('/proc')):
         raise LocalHealthFailure('matrix_listener_unavailable')
 
 
+def reader_coverage(readers, required, audience):
+    """Keep protected bodies and cover new members without reviving siblings."""
+    coordinates = {(r['being_ref'], r['embodiment_id']) for r in readers}
+    return (len(coordinates) == len(readers)
+            and {tuple(row) for row in required} <= coordinates
+            and {r['being_ref'] for r in audience} <= {row[0] for row in coordinates})
+
+
 def ready(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
     from daimon_matrix.canonical import canonical_bytes
@@ -61,8 +69,7 @@ def ready(status, server, required, now_ms):
             or loaded['local_origin'] != server or gate['process_id'] != loaded['process_id']):
         return False
     readers = gate['readers']
-    coordinates = sorted((r['being_ref'], r['embodiment_id']) for r in readers)
-    if coordinates != sorted(tuple(r) for r in required):
+    if not reader_coverage(readers, required, roster['audience']):
         return False
     audience = {(r['being_ref'], r['embodiment_id'], r['credential_id']) for r in roster['audience']}
     epochs = set(roster['required_authority_epochs'])

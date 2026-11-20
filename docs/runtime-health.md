@@ -186,11 +186,16 @@ existing SDK and owner status grant. Its configuration contains `operator`
 application `socket`, owner-private `state`, and `required_readers` pairs of
 being/embodiment coordinates. Invoke it through that body's selected SDK Python;
 keep these local bindings out of public source. It authenticates the current
-application, compares the required reader vector, current credential validity,
+application, requires every protected reader and a reader for every distinct
+being in the current signed audience, then checks current credential validity,
 authority epochs, roster and own loaded application/software selection. It reads
 no inbox and wakes no model. Local reader readiness does not prove peer process
 availability, delivery, model attention or a human reading; retain those separately.
 Install the same local observation on each selected living receiver.
+Adding a new member must not invalidate a healthy extended vector merely because
+the configured protected vector is older. Conversely, omitting the new distinct
+being or a protected body still fails; an unselected sibling of an already covered
+being does not require reviving an archived embodiment.
 
 The adapter retains one replaceable read-only status request plus its lock. Exact
 status reads recompute live native state; no token per tick or report history is
