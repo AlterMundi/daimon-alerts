@@ -362,3 +362,65 @@ absolute deadline. A persistent/invalid roster, changed process, bad authenticat
 or invalid reader remains unavailable; no check is weakened. The private record
 retains that observed roster error, retryability and bounded-read outcome.
 This adds no service restart, input replay, provider request or model attention.
+
+## Finite Matrix owner repair from an existing Reports task
+
+`scripts/owner_repair.py` is an optional fixed host command for the owning
+DaimonApp Alerts action. It does not add an observer, schedule, queue, model or
+inbox reader. Install it together with `service_monitor.py` and `client.py` from
+one selected release. Keep the existing observer configuration, producer grant
+and journal; no new producer or incident store is needed.
+
+The private operator selection contains `enabled: true`, an existing `target_id`,
+its exact Matrix `unit` and `scope`, and an absolute `hold_file`. Select only the
+model-free Matrix service with its existing authenticated `receiving_command`,
+never the Codex/harness service. A present hold file prevents action. Existing
+systemd restrictions still apply. The App's fixed command is:
+
+```text
+python3 RELEASE/scripts/owner_repair.py --config PRIVATE_OBSERVER_CONFIG --selection PRIVATE_SELECTION
+```
+
+App supplies the bounded original `daimon-alerts-repair-input/v1` on stdin:
+`incident.id`, `incident.revision` and `incident.resource_id`. These must match
+the original current producer incident. No command, path, unit or credentials
+come from model input. Only a retained `unit_inactive` incident whose selected
+unit is actually failed with a failure result permits one `systemctl start`.
+Intentional inactive/active services, changed incidents, disabled selection,
+maintenance holds and other faults refuse before starting anything. Verification
+or authorization failures require their owning source repair, not blind restarts.
+
+The adapter shares the existing nonblocking observer lock. Before starting, it
+commits its original digest and operation ID in the existing journal: one current
+record per configured target, replaced only for a later distinct incident.
+Duplicate attempts refuse. A timeout or lost reply retains that claim; call the
+same fixed command with `--inspect-stdin` and the **exact original stdin** to
+observe without starting again. The authenticated reader must be healthy before
+the existing producer transition can resolve that same incident at a higher
+revision. Only its ordered outbox is flushed; unrelated incidents remain with the
+ordinary observer. Pending acceptance stays unconfirmed. No observation heartbeat
+or unrelated incident is declared healthy by this operation.
+
+A successful receipt uses `daimon-alerts-owner-repair/v1` and includes the exact
+source digest, original incident/resource/revision, higher accepted resolution
+revision and operation ID. Inspection returns `existing_resolution_verified`;
+that does not prove the original start caused recovery. Process startup alone is
+insufficient. The normal App process deadline applies; each systemd call is
+bounded at three seconds and the existing authenticated probe retains its own
+bound. A deadline can leave an inspectable operation, never permission to replay.
+
+This adapter covers failed Matrix service recovery only. General owner repairs,
+actual automatic native dispatch and the attributed general-conversation return
+must still be qualified through the selected App Reports action. Controlled
+fixtures must not be reported as production recovery or full fleet acceptance.
+
+Focused qualification: `python3 tests/owner_repair_io.py` covers original claims,
+unknown start/acceptance, stale selection, holds, intentional stops, authenticated
+reader failure, lock exclusion and unrelated outbox preservation. On an authorized
+Linux operator host with an existing user systemd manager and the existing built
+Alerts fixture executable, `ALERTS_SYSTEMD_FIXTURE=1 python3 tests/owner_repair_systemd_io.py`
+uses one disposable failed user service and isolated Alerts database. It verifies
+actual start, readiness, same-incident HTTP resolution and original-input inspection,
+then removes its fixture state and service. This fixture's reader checks its own
+service marker; it does not establish a real Matrix authenticated-reader outcome.
+No native model or production incident participates.

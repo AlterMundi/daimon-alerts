@@ -578,8 +578,15 @@ class Monitor:
         return dict(**{('retired_remote' if remote else 'retired_enrollment'):name}, resolved_incidents=resolved,
                     source_work_recovered=False)
 
-    def flush(self):
-        for seq, raw in self.db.execute('SELECT seq,content FROM outbox ORDER BY seq').fetchall():
+    def flush(self, incident_id=None):
+        # A finite owner repair publishes only its retained incident; ordinary
+        # observer flushes keep their existing complete ordered outbox behavior.
+        query = 'SELECT seq,content FROM outbox'
+        params = ()
+        if incident_id is not None:
+            query += " WHERE json_extract(content,'$.incident_id')=?"
+            params = (incident_id,)
+        for seq, raw in self.db.execute(query + ' ORDER BY seq', params).fetchall():
             value = json.loads(raw)
             result = self.client.call('PUT', '/v1/incidents/' + value['producer_id'] + '/' + value['incident_id'], value)
             if any(result.get(k) != value[k] for k in ('producer_id', 'incident_id', 'revision')):
