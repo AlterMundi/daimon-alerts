@@ -119,6 +119,21 @@ def https_group(target):
 
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'provider_auth':
+        try:
+            result = subprocess.run(target['command'], capture_output=True,
+                                    timeout=24, text=True)
+            if result.returncode or len(result.stdout) > 4096:
+                return 'observation_unreadable'
+            value = json.loads(result.stdout)
+            if (set(value) != {'schema', 'state'}
+                    or value['schema'] != 'dm.monitor.provider-auth/v1'
+                    or value['state'] not in {'healthy', 'provider_login_required',
+                                             'provider_unavailable'}):
+                return 'observation_unreadable'
+            return value['state']
+        except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+            return 'observation_unreadable'
     if target['kind'] == 'https_health_group':
         return https_group(target)
     if target['kind'] == 'scheduled_job':
@@ -270,6 +285,7 @@ def probe(target):
 
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observation_unreadable', 'daemon_unavailable',
+           'provider_login_required', 'provider_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
            'matrix_reader_unavailable', 'matrix_local_capability_expiring', 'matrix_listener_unavailable',
            'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
@@ -296,7 +312,14 @@ class Monitor:
             raise ValueError('at most four external HTTPS health endpoints per observer')
         for target in targets:
             identifier(target['id']); identifier(target['resource_ref'])
-            if target['kind'] in ('webbridge', 'http_health'):
+            if target['kind'] == 'provider_auth':
+                command = target.get('command')
+                if (set(target) != {'id', 'resource_ref', 'kind', 'command'}
+                        or not isinstance(command, list) or not 1 <= len(command) <= 24
+                        or any(not isinstance(arg, str) or not arg or len(arg) > 4096 for arg in command)
+                        or not Path(command[0]).is_absolute()):
+                    raise ValueError('explicit bounded provider health adapter required')
+            elif target['kind'] in ('webbridge', 'http_health'):
                 local_url(target['base_url'])
             elif target['kind']=='https_health_group':
                 entries=target.get('endpoints')
@@ -688,7 +711,9 @@ class Monitor:
                              'worker_stalled' if target['kind'] in ('cgroup_memory','host_memory')
                              else 'service_unavailable'),
                          severity=severity, processing_state='open', summary=summary,
-                         action=('Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
+                         action=('Provider login must be renewed with the existing selected account when required. Verify authenticated native provider access after recovery. A running process or public health page is insufficient. Never replay failed messages or replace accounts automatically.'
+                                 if target['kind'] == 'provider_auth' else
+                                 'Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
                                  if target['kind'] in ('native_codex', 'incus_native', 'cgroup_memory', 'host_memory') else
                                  'Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.'),
                          source_at=now, updated_at=now, work_preserved=True)

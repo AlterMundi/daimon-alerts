@@ -22,6 +22,25 @@ Add only explicitly selected targets to an owner-private observer config:
   reports route/service unavailability without guessing whether the host, VPN or
   application caused it. This is external endpoint coverage, separate from the
   receiving host's native runtime/memory observations and provider acceptance.
+- `kind: provider_auth`, with a fixed operator-owned `command`, accepts only
+  `dm.monitor.provider-auth/v1` and the closed states `healthy`,
+  `provider_login_required`, or `provider_unavailable`. The command is bounded
+  to24seconds/4KiB; error text, tokens and account details never enter Alerts.
+  `scripts/children_provider_health.py` is the existing four-guest host adapter:
+  it uses each guest's selected native proxy and selected activity transport,
+  reads `account/read` and authenticated `account/rateLimits/read`, and never
+  starts a model or resubmits a conversation. Normal native token renewal remains
+  with Codex. A cached account label or public `/health` success is insufficient.
+  Install it through the current host operator route, then extend the existing
+  services observer using `--extend-to`; preserve its journal, scope and timer.
+  Its one private replaceable observation caches four concurrent checks for
+  at most300seconds. `--fresh` verifies explicit login recovery immediately.
+  Preserve the selected account; device login requires its account holder when
+  the native refresh has been rejected. Retain that actual required action,
+  rather than repeatedly attempting refresh or copying a revoked credential.
+  Authentication success does not establish available quota, a useful model
+  response, voice access or end-to-end conversation acceptance. The same incident
+  resolves only after the authenticated check succeeds for all four guests.
 
 Run the finite observer as the same receiving service owner with its actual HOME
 and CODEX_HOME. Use a separately scoped publish/observe/status actor and existing
