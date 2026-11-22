@@ -473,6 +473,14 @@ receiver/Alerts binding rejection opens an availability incident distinct from
 transport or unexpected response. The next healthy full-roster observation
 resolves it. Invalid, partial or inconsistent output is an observation failure.
 
+The observer's existing tick receipt includes `targets[].receivers` for this
+target when the full roster was observed. Each row contains only the configured
+Home slug and the closed App observation state. Use those rows for the owning
+Sysops handoff, including when one receiver has a binding failure and another
+has a transport failure. Missing rows indicate unavailable observation. The
+group keeps one incident and reports affected Home names without exposing
+response bodies or adding another probe.
+
 Inspect the App probe's per-origin result to locate an affected receiver.
 Use the owning App requalification for a known binding change. Preserve
 the current actor, dependent signatures and voice maintenance fence. A public

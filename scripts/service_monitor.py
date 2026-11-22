@@ -125,6 +125,7 @@ CONVERSATION_ACCESS_STATES = {
 
 def conversation_access(target):
     """Read the owning App probe's closed, fixed-roster observation."""
+    target.pop('_conversation_receivers', None)
     try:
         command = target['command']
         result = subprocess.run(command, capture_output=True, timeout=16, text=True)
@@ -141,10 +142,16 @@ def conversation_access(target):
                 or any(row.get('state') not in CONVERSATION_ACCESS_STATES for row in rows)):
             return 'observation_unreadable'
         states = {row['state'] for row in rows}
-        if result.returncode == 0:
-            return 'healthy' if states == {'ready'} else 'observation_unreadable'
-        if states == {'ready'}:
+        ready = states == {'ready'}
+        if ready != (result.returncode == 0):
             return 'observation_unreadable'
+        target['_conversation_receivers'] = [
+            {'id': urllib.parse.urlsplit(row['origin']).hostname.removesuffix('.dmn.homes'),
+             'state': row['state']}
+            for row in rows
+        ]
+        if ready:
+            return 'healthy'
         if states & {'receiver_binding_changed', 'alerts_binding_changed'}:
             return 'conversation_access_needs_requalification'
         return 'conversation_entry_unavailable'
@@ -746,6 +753,13 @@ class Monitor:
         if not active and (not prior or prior['processing_state'] == 'resolved'):
             return
         summary = target['id'] + ': ' + reason.replace('_', ' ') + '.'
+        unavailable = [row['id'] for row in target.get('_conversation_receivers', ())
+                       if row['state'] != 'ready']
+        if unavailable:
+            homes = ', '.join(unavailable[:2])
+            if len(unavailable) > 2:
+                homes += f' and {len(unavailable)-2} more'
+            summary = f'Conversation access unavailable on {homes}.'
         severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
         if prior and prior['processing_state'] == 'open':
             if active and prior['summary'] == summary:
@@ -830,9 +844,9 @@ class Monitor:
             if demand_unit:
                 selected['demand_unit'] = demand_unit
             try:
-                return check(selected), selected.get('_counters')
+                return check(selected), selected
             except Exception:
-                return 'observation_unreadable', None
+                return 'observation_unreadable', target
         def observations():
             nonlocal available
             native = [t for t in targets if t['kind'] == 'incus_native']
@@ -860,7 +874,8 @@ class Monitor:
                         heartbeat_at = time.monotonic() + 10
                     for future in done:
                         yield pending.pop(future), future.result()
-        for target, (reason, counters) in observations():
+        for target, (reason, observed) in observations():
+            counters = observed.get('_counters')
             try:
                 if counters is not None:
                     prior = self.db.execute('SELECT content FROM runtime_counters WHERE id=?',
@@ -878,12 +893,15 @@ class Monitor:
             observed_at = int(time.time()) if live_clock else now
             resolution_ready = (self.memory_resolution_ready(target, reason, counters, observed_at)
                                 if available else True)
-            rows.append(dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending'))
+            row = dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending')
+            if '_conversation_receivers' in observed:
+                row['receivers'] = observed['_conversation_receivers']
+            rows.append(row)
             # Do not mutate uncertain revisions while acceptance is pending.
             if available:
                 # Unknown observation never resolves a retained outage.
                 if resolution_ready:
-                    self.transition(target, reason, observed_at)
+                    self.transition(observed, reason, observed_at)
                 # Retain the incident/outbox before consuming the counter edge.
                 # Service outage or a crash must not erase an observed restart.
                 if counters is not None:

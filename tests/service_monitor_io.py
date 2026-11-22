@@ -273,6 +273,36 @@ class Durable(unittest.TestCase):
         self.client.call.side_effect=call
         self.config=configuration(self.directory)
 
+    def test_conversation_tick_hands_off_per_receiver_failure_and_clears_on_ready(self):
+        from subprocess import CompletedProcess
+        origins = ['https://first.dmn.homes', 'https://second.dmn.homes']
+        target = dict(id='conversation-access', resource_ref='host', kind='conversation_access',
+                      command=['/usr/bin/python3', '/selected/access_probe.py', *origins])
+        def result(states, code):
+            return CompletedProcess(target['command'], code, json.dumps(dict(
+                schema='daimonapp.conversation-access-observation/v1', scope='anonymous_public_entry',
+                receivers=[dict(origin=origin, state=state, private='not projected')
+                           for origin, state in zip(origins, states)])), '')
+
+        monitor = Monitor(dict(self.config, targets=[target]), self.client)
+        try:
+            mixed = ['receiver_binding_changed', 'transport_unavailable']
+            with patch('service_monitor.subprocess.run', return_value=result(mixed, 1)):
+                observation = monitor.tick(now=10)['targets'][0]
+            self.assertEqual(observation['receivers'], [
+                {'id':'first', 'state':mixed[0]}, {'id':'second', 'state':mixed[1]},
+            ])
+            self.assertEqual(self.sent[-1]['summary'], 'Conversation access unavailable on first, second.')
+            with patch('service_monitor.subprocess.run', return_value=result(['ready'], 0)):
+                self.assertNotIn('receivers', monitor.tick(now=11)['targets'][0])
+            self.assertEqual(self.sent[-1]['processing_state'], 'open')
+            with patch('service_monitor.subprocess.run', return_value=result(['ready', 'ready'], 0)):
+                self.assertEqual(monitor.tick(now=12)['targets'][0]['state'], 'healthy')
+            self.assertEqual(self.sent[-1]['processing_state'], 'resolved')
+            self.assertEqual(self.sent[0]['incident_id'], self.sent[-1]['incident_id'])
+        finally:
+            monitor.close()
+
     def test_reader_refresh_preserves_incident_pending_version_and_lost_reply(self):
         target=dict(id='matrix',resource_ref='body',kind='unit',unit='matrix.service',
                     receiving_command=['/old-reader'])
