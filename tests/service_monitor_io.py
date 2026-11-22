@@ -363,6 +363,28 @@ class Durable(unittest.TestCase):
             self.assertEqual(len(self.sent),2) # Reporting emits no network call.
         finally:monitor.close()
 
+    def test_heartbeat_report_distinguishes_authenticated_resolution_from_standby(self):
+        reader = dict(id='matrix', resource_ref='host', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+        other = dict(id='ordinary', resource_ref='host', kind='unit', unit='ordinary.service')
+        monitor = Monitor(dict(self.config, targets=[reader, other]), self.client)
+        try:
+            monitor.tick(lambda _: 'observation_unreadable', now=10)
+            monitor.tick(lambda t: 'healthy' if t['id'] == 'matrix' else 'standby', now=11)
+            incidents = {i['operation_id']: i for i in monitor.heartbeat_report()['incidents']}
+            self.assertEqual(incidents['service-matrix']['resolution_evidence'], {
+                'authenticated_reader': 'verified',
+                'observed_at': 11,
+                'scope': 'selected_unit_receiving_probe',
+            })
+            self.assertNotIn('resolution_evidence', incidents['service-ordinary'])
+            monitor.tick(lambda _: 'observation_unreadable', now=12)
+            monitor.tick(lambda _: 'standby', now=13)
+            self.assertTrue(all('resolution_evidence' not in i
+                                for i in monitor.heartbeat_report()['incidents']))
+        finally:
+            monitor.close()
+
     def test_heartbeat_report_keeps_pending_acceptance_and_restarts_without_replay(self):
         monitor=Monitor(self.config,self.client)
         try:

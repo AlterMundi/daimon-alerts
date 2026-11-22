@@ -689,14 +689,30 @@ class Monitor:
             "json_extract(content,'$.processing_state')='open' DESC, "
             "json_extract(content,'$.updated_at') DESC,id LIMIT 33").fetchall()
         incidents = []
+        authenticated_targets = {
+            target['id'] for target in self.config['targets']
+            if target['kind'] == 'unit' and 'receiving_command' in target
+        }
         for (raw,) in rows[:32]:
             value = json.loads(raw)
             pending = self.db.execute("SELECT 1 FROM outbox WHERE "
                 "json_extract(content,'$.incident_id')=? AND "
                 "json_extract(content,'$.revision')<=? LIMIT 1",
                 (value['incident_id'], value['revision'])).fetchone()
-            incidents.append({**{key: value[key] for key in fields},
-                              'acceptance': 'pending' if pending else 'accepted'})
+            incident = {**{key: value[key] for key in fields},
+                        'acceptance': 'pending' if pending else 'accepted'}
+            target_id = value['operation_id'].removeprefix('service-')
+            if (target_id in authenticated_targets
+                    and value['processing_state'] == 'resolved'
+                    and value['summary'] == target_id + ': healthy.'):
+                # This is the successful authenticated check used by the observer
+                # transition. A start or causal ownership needs its own receipt.
+                incident['resolution_evidence'] = {
+                    'authenticated_reader': 'verified',
+                    'observed_at': value['updated_at'],
+                    'scope': 'selected_unit_receiving_probe',
+                }
+            incidents.append(incident)
         status = self.db.execute('SELECT value FROM status').fetchone()
         status = json.loads(status[0]) if status else {}
         report = dict(schema='daimon-alerts.heartbeat-report/v1',
