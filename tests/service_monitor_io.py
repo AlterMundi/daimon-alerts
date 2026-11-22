@@ -376,10 +376,26 @@ class Durable(unittest.TestCase):
                 'authenticated_reader': 'verified',
                 'observed_at': 11,
                 'scope': 'selected_unit_receiving_probe',
+                'opening_observation': 'observation_unreadable',
+                'owner_repair': 'no_matching_owner_repair_recorded',
             })
-            self.assertNotIn('resolution_evidence', incidents['service-ordinary'])
-            monitor.tick(lambda _: 'observation_unreadable', now=12)
-            monitor.tick(lambda _: 'standby', now=13)
+            with monitor.db:
+                monitor.db.execute('CREATE TABLE owner_repairs(target TEXT PRIMARY KEY, content TEXT)')
+            monitor.tick(lambda _: 'unit_inactive', now=12)
+            incident = next(i['incident_id'] for i in monitor.heartbeat_report()['incidents']
+                            if i['operation_id'] == 'service-matrix')
+            with monitor.db:
+                monitor.db.execute('INSERT INTO owner_repairs VALUES(?,?)', ('matrix', json.dumps({
+                    'incident_id': incident, 'state': 'claimed',
+                })))
+            monitor.tick(lambda t: 'healthy' if t['id'] == 'matrix' else 'standby', now=13)
+            closure = monitor.db.execute(
+                'SELECT opening_reason, authenticated_at, repair_state '
+                'FROM reader_incident_observations WHERE incident=?', (incident,),
+            ).fetchone()
+            self.assertEqual(closure, ('unit_inactive', 13, 'claimed_outcome_unconfirmed'))
+            monitor.tick(lambda _: 'observation_unreadable', now=14)
+            monitor.tick(lambda _: 'standby', now=15)
             self.assertTrue(all('resolution_evidence' not in i
                                 for i in monitor.heartbeat_report()['incidents']))
         finally:

@@ -674,6 +674,17 @@ class Monitor:
             with self.db:
                 self.db.execute('DELETE FROM outbox WHERE seq=?', (seq,))
 
+    def reader_repair_state(self, target_id, incident_id):
+        if not self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_repairs'").fetchone():
+            return 'no_matching_owner_repair_recorded'
+        row = self.db.execute('SELECT content FROM owner_repairs WHERE target=?', (target_id,)).fetchone()
+        repair = json.loads(row[0]) if row else {}
+        if repair.get('incident_id') != incident_id:
+            return 'no_matching_owner_repair_recorded'
+        return ('start_acknowledged' if repair.get('state') == 'start_acknowledged'
+                else 'claimed_outcome_unconfirmed')
+
     def heartbeat_report(self):
         """Project retained incidents for an explicitly selected owner reader.
 
@@ -689,6 +700,9 @@ class Monitor:
             "json_extract(content,'$.processing_state')='open' DESC, "
             "json_extract(content,'$.updated_at') DESC,id LIMIT 33").fetchall()
         incidents = []
+        has_observations = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='reader_incident_observations'"
+        ).fetchone()
         authenticated_targets = {
             target['id'] for target in self.config['targets']
             if target['kind'] == 'unit' and 'receiving_command' in target
@@ -712,6 +726,18 @@ class Monitor:
                     'observed_at': value['updated_at'],
                     'scope': 'selected_unit_receiving_probe',
                 }
+                observation = self.db.execute(
+                    'SELECT opening_reason, repair_state FROM reader_incident_observations '
+                    'WHERE incident=? AND target=?',
+                    (value['incident_id'], target_id),
+                ).fetchone() if has_observations else None
+                incident['resolution_evidence']['opening_observation'] = (
+                    observation[0] if observation and observation[0] in REASONS else 'not_retained'
+                )
+                incident['resolution_evidence']['owner_repair'] = (
+                    observation[1] if observation and observation[1] is not None
+                    else self.reader_repair_state(target_id, value['incident_id'])
+                )
             incidents.append(incident)
         status = self.db.execute('SELECT value FROM status').fetchone()
         status = json.loads(status[0]) if status else {}
@@ -803,6 +829,31 @@ class Monitor:
         with self.db:
             self.db.execute('INSERT OR REPLACE INTO incidents VALUES(?,?)', (target['id'], raw))
             self.db.execute('INSERT INTO outbox(content) VALUES(?)', (raw,))
+            if (active and value['revision'] == 1 and target['kind'] == 'unit'
+                    and 'receiving_command' in target):
+                self.db.execute(
+                    'CREATE TABLE IF NOT EXISTS reader_incident_observations('
+                    'seq INTEGER PRIMARY KEY, incident TEXT UNIQUE, target TEXT, opening_reason TEXT, '
+                    'authenticated_at INTEGER, repair_state TEXT)'
+                )
+                self.db.execute(
+                    'INSERT INTO reader_incident_observations(incident,target,opening_reason) VALUES(?,?,?)',
+                    (value['incident_id'], target['id'], reason),
+                )
+                self.db.execute(
+                    "DELETE FROM reader_incident_observations WHERE seq NOT IN ("
+                    "SELECT seq FROM reader_incident_observations ORDER BY seq DESC LIMIT 128)"
+                    " AND incident NOT IN (SELECT json_extract(content,'$.incident_id') FROM incidents)"
+                )
+            if (reason == 'healthy' and target['kind'] == 'unit' and 'receiving_command' in target
+                    and self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                        "AND name='reader_incident_observations'").fetchone()):
+                self.db.execute(
+                    'UPDATE reader_incident_observations SET authenticated_at=?, repair_state=? '
+                    'WHERE incident=? AND target=?',
+                    (value['updated_at'], self.reader_repair_state(target['id'], value['incident_id']),
+                     value['incident_id'], target['id']),
+                )
 
     def memory_resolution_ready(self, target, reason, counters, now):
         """Retain an open outage until lower PSI is sustained across real samples."""
