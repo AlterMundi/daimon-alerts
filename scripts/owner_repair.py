@@ -75,6 +75,7 @@ def recover(monitor, selection, raw, inspect=False, run=subprocess.run, check=pr
         # Commit before invoking systemd. A crash/lost reply never permits replay.
         # One current receipt per configured target, not an accumulating queue.
         prior = dict(incident_id=incident['id'], source_sha256=digest,
+                     incident_revision=incident['revision'],
                      operation_id=operation, state='claimed', claimed_at=int(time.time()))
         with monitor.db:
             monitor.db.execute('INSERT OR REPLACE INTO owner_repairs VALUES(?,?)',
@@ -103,6 +104,36 @@ def recover(monitor, selection, raw, inspect=False, run=subprocess.run, check=pr
                 incident_id=incident['id'], incident_revision=incident['revision'],
                 resource_id=incident['resource_id'], resolution_state='resolved',
                 resolution_revision=resolved['revision'], operation_id=prior['operation_id'])
+
+
+def reconcile_observed(monitor, selection):
+    """One selected producer repair, without a model or a second scheduler.
+
+    Reconstruct only this adapter's canonical input. A retained different/legacy
+    invocation is never retried. The existing durable claim fences all starts.
+    """
+    target = selection['target_id']
+    row = monitor.db.execute('SELECT content FROM incidents WHERE id=?', (target,)).fetchone()
+    if not row:
+        return 'not_needed'
+    incident = json.loads(row[0])
+    if incident['processing_state'] != 'open' or incident['summary'] != target + ': unit inactive.':
+        return 'not_eligible'
+    monitor.db.execute('CREATE TABLE IF NOT EXISTS owner_repairs(target TEXT PRIMARY KEY, content TEXT)')
+    row = monitor.db.execute('SELECT content FROM owner_repairs WHERE target=?', (target,)).fetchone()
+    prior = json.loads(row[0]) if row else None
+    inspect = bool(prior and prior['incident_id'] == incident['incident_id'])
+    revision = prior.get('incident_revision') if inspect else incident['revision']
+    if type(revision) is not int:
+        return 'original_input_unavailable'
+    raw = json.dumps(dict(schema='daimon-alerts-repair-input/v1', incident=dict(
+        id=incident['incident_id'], revision=revision, resource_id=incident['resource_ref'])),
+        sort_keys=True).encode()
+    try:
+        return recover(monitor, selection, raw, inspect=inspect)['state']
+    except (Refused, OSError, ValueError, KeyError, TypeError, Unavailable,
+            StopIteration, sqlite3.Error, subprocess.TimeoutExpired):
+        return 'unconfirmed'
 
 
 def main():

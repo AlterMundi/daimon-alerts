@@ -7,11 +7,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'scripts'))
 from client import Unavailable
-from owner_repair import Refused, recover
+from owner_repair import Refused, recover, reconcile_observed
 from service_monitor import Monitor
 
 
@@ -44,6 +44,35 @@ class Recovery(unittest.TestCase):
 
     def act(self, **kwargs):
         return recover(self.monitor, self.selection, self.raw, run=self.run, check=self.check, **kwargs)
+
+    def test_programmatic_observation_recovers_once_without_a_model(self):
+        def actual(monitor, selection, raw, inspect=False):
+            return recover(monitor, selection, raw, inspect=inspect, run=self.run, check=self.check)
+        self.check.return_value = 'matrix_reader_unavailable'
+        with patch('owner_repair.recover', side_effect=actual):
+            self.assertEqual(reconcile_observed(self.monitor, self.selection), 'unconfirmed')
+            self.assertEqual(self.run.call_count, 2)
+            self.assertEqual(reconcile_observed(self.monitor, self.selection), 'unconfirmed')
+            self.assertEqual(self.run.call_count, 2, 'No second start after an uncertain outcome')
+            self.check.return_value = 'healthy'
+            self.assertEqual(reconcile_observed(self.monitor, self.selection), 'existing_resolution_verified')
+            self.assertEqual(self.run.call_count, 2)
+            self.assertEqual(reconcile_observed(self.monitor, self.selection), 'not_eligible')
+        current = json.loads(self.monitor.db.execute('SELECT content FROM incidents').fetchone()[0])
+        self.assertEqual(current['incident_id'], self.original['incident_id'])
+        self.assertEqual(current['revision'], 2)
+        self.assertEqual(current['processing_state'], 'resolved')
+
+    def test_programmatic_recovery_preserves_legacy_original_and_holds(self):
+        Path(self.selection['hold_file']).touch()
+        self.assertEqual(reconcile_observed(self.monitor, self.selection), 'unconfirmed')
+        self.run.assert_not_called()
+        Path(self.selection['hold_file']).unlink()
+        self.monitor.db.execute('INSERT INTO owner_repairs VALUES(?,?)',
+            ('matrix', json.dumps(dict(incident_id=self.original['incident_id'], source_sha256='old'))))
+        with patch('owner_repair.recover') as action:
+            self.assertEqual(reconcile_observed(self.monitor, self.selection), 'original_input_unavailable')
+            action.assert_not_called()
 
     def test_same_incident_resolution_and_duplicate_refusal(self):
         receipt = self.act()
