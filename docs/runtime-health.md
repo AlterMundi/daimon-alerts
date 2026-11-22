@@ -460,3 +460,21 @@ a legacy claim lacking its original revision remains unconfirmed. Authenticated
 receiving and accepted same-incident higher-revision resolution establish recovery.
 The ordinary safe report carries that outcome for change-driven notification.
 Do not require a Reports/LLM execution before invoking this programmatic recovery.
+
+### Conversation public access
+
+Add one `conversation_access` target to the existing critical-service observer
+using its `--extend-to` operation. Select the owning DaimonApp
+`scripts/interaction_access_probe.py` with an absolute Python executable,
+an immutable absolute script path and up to eight exact Home HTTPS origins.
+The group consumes a single bounded pass on the existing cadence. It checks
+the public Conversation shell and expected anonymous API fence. A known
+receiver/Alerts binding rejection opens an availability incident distinct from
+transport or unexpected response. The next healthy full-roster observation
+resolves it. Invalid, partial or inconsistent output is an observation failure.
+
+Inspect the App probe's per-origin result to locate an affected receiver.
+Use the owning App requalification for a known binding change. Preserve
+the current actor, dependent signatures and voice maintenance fence. A public
+probe cannot establish a human's authenticated browser journey. No credentials
+are accepted by the probe and this observer does not apply any App repair.

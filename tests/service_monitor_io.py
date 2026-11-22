@@ -18,6 +18,32 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_conversation_access_requires_full_roster_and_reports_binding_failure(self):
+        from subprocess import CompletedProcess
+        origins = ['https://first.dmn.homes', 'https://second.dmn.homes']
+        target = dict(id='conversation-access', resource_ref='host', kind='conversation_access',
+                      command=['/usr/bin/python3', '/selected/access_probe.py', *origins])
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = configuration(Path(directory))
+            Monitor.validate(dict(cfg, targets=[*cfg['targets'], target]))
+            with self.assertRaises(ValueError):
+                Monitor.validate(dict(cfg, targets=[dict(target, command=target['command'] + [origins[0]])]))
+        for states, exit_code, expected in (
+                (['ready', 'ready'], 0, 'healthy'),
+                (['ready', 'receiver_binding_changed'], 1, 'conversation_access_needs_requalification'),
+                (['unexpected_entry_response', 'ready'], 1, 'conversation_entry_unavailable'),
+                (['ready'], 0, 'observation_unreadable'),
+                (['ready', 'alerts_binding_changed'], 0, 'observation_unreadable'),
+                (['ready', 'ready'], 2, 'observation_unreadable')):
+            output = json.dumps(dict(schema='daimonapp.conversation-access-observation/v1',
+                                     scope='anonymous_public_entry', receivers=[
+                                         dict(origin=origin, state=state)
+                                         for origin, state in zip(origins, states)]))
+            with self.subTest(states=states, exit_code=exit_code), patch(
+                    'service_monitor.subprocess.run',
+                    return_value=CompletedProcess(target['command'], exit_code, output, '')):
+                self.assertEqual(probe(target), expected)
+
     def test_explicit_https_group_is_bounded_and_credential_free(self):
         target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
                     endpoints=[dict(id='one',url='https://one.example/interaction/health'),
