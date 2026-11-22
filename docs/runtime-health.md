@@ -446,3 +446,17 @@ actual start, readiness, same-incident HTTP resolution and original-input inspec
 then removes its fixture state and service. This fixture's reader checks its own
 service marker; it does not establish a real Matrix authenticated-reader outcome.
 No native model or production incident participates.
+
+### Immediate fixed recovery, independent of model review
+
+The existing finite observer accepts `--owner-repair-selection PRIVATE_JSON` to
+run its already-qualified fixed Matrix recovery immediately after observing and
+publishing an eligible incident. This reuses the same producer lock/journal,
+selected target, maintenance hold and durable once-only claim. There is no second
+scheduler or model turn. Only a genuinely failed selected service is eligible;
+intentional inactivity, other targets and account-login failures are not starts.
+An uncertain start is followed only by inspection of the exact original input;
+a legacy claim lacking its original revision remains unconfirmed. Authenticated
+receiving and accepted same-incident higher-revision resolution establish recovery.
+The ordinary safe report carries that outcome for change-driven notification.
+Do not require a Reports/LLM execution before invoking this programmatic recovery.

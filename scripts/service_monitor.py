@@ -962,6 +962,8 @@ def main():
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--heartbeat-report', action='store_true',
                         help='Write one bounded owner-private incident report after the ordinary observation')
+    parser.add_argument('--owner-repair-selection', type=Path,
+                        help='Run the existing fixed owner repair immediately after observation; no model')
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--retire-enrollment', metavar='NAME',
                         help='Explicitly archive one old container enrollment and resolve only its observations')
@@ -995,6 +997,10 @@ def main():
             print(json.dumps(monitor.retire_enrollment(args.retire_enrollment)))
             return 0
         result = monitor.tick()
+        if args.owner_repair_selection:
+            from owner_repair import reconcile_observed
+            selection = json.loads(private_text(args.owner_repair_selection, 4096))
+            result['owner_repair'] = reconcile_observed(monitor, selection)
         if args.heartbeat_report:
             monitor.heartbeat_report()
         print(json.dumps(result))
