@@ -88,6 +88,11 @@ def recover(monitor, selection, raw, inspect=False, run=subprocess.run, check=pr
         started = run(start + command + ['start', target['unit']], capture_output=True, text=True, timeout=3)
         if started.returncode:
             raise Refused('service recovery unconfirmed; inspect original input')
+        # Acknowledgment is evidence of the writer response, not causation.
+        prior = dict(prior, state='start_acknowledged')
+        with monitor.db:
+            monitor.db.execute('UPDATE owner_repairs SET content=? WHERE target=?',
+                               (json.dumps(prior, sort_keys=True), target['id']))
     # The real authenticated reader probe decides recovery, not process startup.
     if check(target) != 'healthy':
         raise Refused('authenticated receiving unavailable')

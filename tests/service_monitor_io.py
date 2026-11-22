@@ -363,6 +363,44 @@ class Durable(unittest.TestCase):
             self.assertEqual(len(self.sent),2) # Reporting emits no network call.
         finally:monitor.close()
 
+    def test_heartbeat_report_distinguishes_authenticated_resolution_from_standby(self):
+        reader = dict(id='matrix', resource_ref='host', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+        other = dict(id='ordinary', resource_ref='host', kind='unit', unit='ordinary.service')
+        monitor = Monitor(dict(self.config, targets=[reader, other]), self.client)
+        try:
+            monitor.tick(lambda _: 'observation_unreadable', now=10)
+            monitor.tick(lambda t: 'healthy' if t['id'] == 'matrix' else 'standby', now=11)
+            incidents = {i['operation_id']: i for i in monitor.heartbeat_report()['incidents']}
+            self.assertEqual(incidents['service-matrix']['resolution_evidence'], {
+                'authenticated_reader': 'verified',
+                'observed_at': 11,
+                'scope': 'selected_unit_receiving_probe',
+                'opening_observation': 'observation_unreadable',
+                'owner_repair': 'no_matching_owner_repair_recorded',
+            })
+            with monitor.db:
+                monitor.db.execute('CREATE TABLE owner_repairs(target TEXT PRIMARY KEY, content TEXT)')
+            monitor.tick(lambda _: 'unit_inactive', now=12)
+            incident = next(i['incident_id'] for i in monitor.heartbeat_report()['incidents']
+                            if i['operation_id'] == 'service-matrix')
+            with monitor.db:
+                monitor.db.execute('INSERT INTO owner_repairs VALUES(?,?)', ('matrix', json.dumps({
+                    'incident_id': incident, 'state': 'claimed',
+                })))
+            monitor.tick(lambda t: 'healthy' if t['id'] == 'matrix' else 'standby', now=13)
+            closure = monitor.db.execute(
+                'SELECT opening_reason, authenticated_at, repair_state '
+                'FROM reader_incident_observations WHERE incident=?', (incident,),
+            ).fetchone()
+            self.assertEqual(closure, ('unit_inactive', 13, 'claimed_outcome_unconfirmed'))
+            monitor.tick(lambda _: 'observation_unreadable', now=14)
+            monitor.tick(lambda _: 'standby', now=15)
+            self.assertTrue(all('resolution_evidence' not in i
+                                for i in monitor.heartbeat_report()['incidents']))
+        finally:
+            monitor.close()
+
     def test_heartbeat_report_keeps_pending_acceptance_and_restarts_without_replay(self):
         monitor=Monitor(self.config,self.client)
         try:

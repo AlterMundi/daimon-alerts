@@ -486,3 +486,18 @@ Use the owning App requalification for a known binding change. Preserve
 the current actor, dependent signatures and voice maintenance fence. A public
 probe cannot establish a human's authenticated browser journey. No credentials
 are accepted by the probe and this observer does not apply any App repair.
+
+An exact healthy resolution from a configured authenticated unit probe includes
+`resolution_evidence` on its existing heartbeat incident projection. It records
+the authenticated read that closed that incident and its observation time.
+Standby, retired placements and checks without an authenticated reader do not
+carry this evidence. A successful observation cannot establish the cause of the
+preceding failure or attribute a service restart without its own receipt.
+
+For new authenticated reader incidents, the local observer keeps the opening
+observation, successful authenticated read time, and same-incident owner repair
+state in one bounded journal. Retention keeps 128 recent rows plus current
+incidents. A successful start response, a claimed start with unknown outcome,
+and no matching repair record remain distinct. Historical incidents without
+an opening observation explicitly say it was not retained. An observation or
+start acknowledgment does not attribute the underlying fault or causal repair.
