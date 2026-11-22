@@ -478,3 +478,20 @@ Use the owning App requalification for a known binding change. Preserve
 the current actor, dependent signatures and voice maintenance fence. A public
 probe cannot establish a human's authenticated browser journey. No credentials
 are accepted by the probe and this observer does not apply any App repair.
+
+### DMK health evidence for the restricted Reports reader
+
+The finite critical-services observer may invoke `scripts/dmk_reports_health.py`
+as a post-action of its existing unit. Use exact owner-selected worker, Alerts
+incident, applied learning and attributed peer-assessment receipts, the bound
+independent Alerts supervisor, and the existing freshness threshold. Write one
+atomic file named `dmk-learning-health.json` under the existing read-only
+heartbeat report directory. Readers need no access to source receipts, the
+supervisor bus or the memory store. This projection adds no activation route.
+
+Keep observation/source timestamps separate from the meaningful revision.
+Capture and index cursors are not consolidation receipts. Backup verification
+and active supervision do not establish organization output. A selected local
+use receipt and a peer decision do not attest sustained reciprocal learning.
+Missing or malformed sources carry unobserved states. The projection emits
+closed labels and numeric receipt fields, with no text, paths or credentials.
