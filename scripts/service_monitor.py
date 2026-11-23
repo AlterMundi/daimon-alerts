@@ -45,7 +45,8 @@ def read_json(url, payload=None):
 MATRIX_RECEIVING_STATES = {
     'matrix_local_capability_expiring', 'matrix_listener_unavailable',
     'matrix_probe_contended', 'matrix_roster_contended', 'matrix_roster_invalid',
-    'matrix_roster_unavailable',
+    'matrix_roster_unavailable', 'matrix_status_socket_missing',
+    'matrix_status_socket_refused', 'matrix_status_socket_timeout',
 }
 
 

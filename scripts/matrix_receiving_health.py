@@ -196,6 +196,22 @@ def acquire_probe_lock(lock):
             time.sleep(min(0.05, remaining))
 
 
+def observe_peer(address, observer):
+    # Establish the actual peer before selecting the retained read token.
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(2)
+        try:
+            connection.connect(address)
+        except FileNotFoundError:
+            raise LocalHealthFailure('matrix_status_socket_missing') from None
+        except ConnectionRefusedError:
+            raise LocalHealthFailure('matrix_status_socket_refused') from None
+        except TimeoutError:
+            raise LocalHealthFailure('matrix_status_socket_timeout') from None
+        with observer(connection):
+            return observer.process
+
+
 def inspect(config, diagnostic=None):
     diagnostic = {} if diagnostic is None else diagnostic
     diagnostic['stage'] = 'sdk_import'
@@ -219,12 +235,7 @@ def inspect(config, diagnostic=None):
     with (state / 'lock').open('a+b') as lock, ConnectedProcessObserver() as observer:
         acquire_probe_lock(lock)
         diagnostic['stage'] = 'peer_connect'
-        # Establish the actual peer before selecting the retained read token.
-        with socket.socket(socket.AF_UNIX) as connection:
-            connection.settimeout(2)
-            connection.connect(config['socket'])
-            with observer(connection):
-                process = observer.process
+        process = observe_peer(config['socket'], observer)
         client = LocalClient(Path(config['socket']), cfg, connection_observer=observer,
                              timeout_seconds=8, deadline_ns=time.monotonic_ns()+8_000_000_000)
         binding = dict(process=process, server=dict(cfg.expected_server),

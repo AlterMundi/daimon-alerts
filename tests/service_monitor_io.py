@@ -192,7 +192,9 @@ class Probes(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs['timeout'], 12)
         for state in ('matrix_local_capability_expiring', 'matrix_listener_unavailable',
                       'matrix_probe_contended', 'matrix_roster_contended',
-                      'matrix_roster_invalid', 'matrix_roster_unavailable'):
+                      'matrix_roster_invalid', 'matrix_roster_unavailable',
+                      'matrix_status_socket_missing', 'matrix_status_socket_refused',
+                      'matrix_status_socket_timeout'):
             result = Mock(returncode=0, stdout=json.dumps(dict(schema='dm.monitor.matrix-receiving/v2', state=state)))
             with patch('service_monitor.subprocess.run', return_value=result):
                 self.assertEqual(matrix_receiving(target['command']), state)
@@ -371,14 +373,14 @@ class Durable(unittest.TestCase):
         other = dict(id='ordinary', resource_ref='host', kind='unit', unit='ordinary.service')
         monitor = Monitor(dict(self.config, targets=[reader, other]), self.client)
         try:
-            monitor.tick(lambda _: 'matrix_roster_contended', now=10)
+            monitor.tick(lambda _: 'matrix_status_socket_missing', now=10)
             monitor.tick(lambda t: 'healthy' if t['id'] == 'matrix' else 'standby', now=11)
             incidents = {i['operation_id']: i for i in monitor.heartbeat_report()['incidents']}
             self.assertEqual(incidents['service-matrix']['resolution_evidence'], {
                 'authenticated_reader': 'verified',
                 'observed_at': 11,
                 'scope': 'selected_unit_receiving_probe',
-                'opening_observation': 'matrix_roster_contended',
+                'opening_observation': 'matrix_status_socket_missing',
                 'owner_repair': 'no_matching_owner_repair_recorded',
             })
             with monitor.db:

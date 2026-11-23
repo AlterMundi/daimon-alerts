@@ -97,6 +97,16 @@ class SafeFailureTests(unittest.TestCase):
             m.retain_failure({'state':tmp},{'stage':'status_send'},ValueError('private payload'))
             self.assertFalse((root/'probe-failure.json').exists())
 
+    def test_missing_socket_and_socket_without_listener_are_distinct(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            address = str(Path(tmp) / 'reader.sock')
+            with self.assertRaisesRegex(m.LocalHealthFailure, 'matrix_status_socket_missing'):
+                m.observe_peer(address, None)
+            with socket.socket(socket.AF_UNIX) as endpoint:
+                endpoint.bind(address)
+                with self.assertRaisesRegex(m.LocalHealthFailure, 'matrix_status_socket_refused'):
+                    m.observe_peer(address, None)
+
     def test_probe_lock_waits_briefly_when_another_read_is_active(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'lock'

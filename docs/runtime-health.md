@@ -515,3 +515,10 @@ An authenticated roster observation distinguishes transient database contention,
 an unavailable roster and an invalid roster. The monitor retains those typed
 opening observations alongside each incident's verified resolution and any
 matching repair receipt.
+
+During a Matrix update, the unit can be active before the Unix status socket
+exists. The reader distinguishes an absent socket, a refused connection and a
+connection timeout. These are observations about the configured socket; only
+the lifecycle record establishes whether a deployment was in progress. Keep
+monitoring during updates and require a successful authenticated read for
+recovery.
