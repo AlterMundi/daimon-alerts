@@ -117,8 +117,52 @@ def https_group(target):
         return 'healthy' if all(list(pool.map(check,target['endpoints']))) else 'health_unavailable'
 
 
+CONVERSATION_ACCESS_STATES = {
+    'ready', 'receiver_binding_changed', 'alerts_binding_changed',
+    'unexpected_access_response', 'unexpected_entry_response', 'transport_unavailable',
+}
+
+
+def conversation_access(target):
+    """Read the owning App probe's closed, fixed-roster observation."""
+    target.pop('_conversation_receivers', None)
+    try:
+        command = target['command']
+        result = subprocess.run(command, capture_output=True, timeout=16, text=True)
+        if result.returncode not in (0, 1) or len(result.stdout) > 4096:
+            return 'observation_unreadable'
+        value = json.loads(result.stdout)
+        if (set(value) != {'schema', 'scope', 'receivers'}
+                or value['schema'] != 'daimonapp.conversation-access-observation/v1'
+                or value['scope'] != 'anonymous_public_entry'
+                or not isinstance(value['receivers'], list)):
+            return 'observation_unreadable'
+        rows = value['receivers']
+        if ([row.get('origin') for row in rows] != command[2:]
+                or any(row.get('state') not in CONVERSATION_ACCESS_STATES for row in rows)):
+            return 'observation_unreadable'
+        states = {row['state'] for row in rows}
+        ready = states == {'ready'}
+        if ready != (result.returncode == 0):
+            return 'observation_unreadable'
+        target['_conversation_receivers'] = [
+            {'id': urllib.parse.urlsplit(row['origin']).hostname.removesuffix('.dmn.homes'),
+             'state': row['state']}
+            for row in rows
+        ]
+        if ready:
+            return 'healthy'
+        if states & {'receiver_binding_changed', 'alerts_binding_changed'}:
+            return 'conversation_access_needs_requalification'
+        return 'conversation_entry_unavailable'
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.TimeoutExpired):
+        return 'observation_unreadable'
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'conversation_access':
+        return conversation_access(target)
     if target['kind'] == 'provider_auth':
         try:
             result = subprocess.run(target['command'], capture_output=True,
@@ -286,6 +330,7 @@ def probe(target):
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observation_unreadable', 'daemon_unavailable',
            'provider_login_required', 'provider_unavailable',
+           'conversation_access_needs_requalification', 'conversation_entry_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
            'matrix_reader_unavailable', 'matrix_local_capability_expiring', 'matrix_listener_unavailable',
            'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
@@ -306,7 +351,9 @@ class Monitor:
         for k in ('producer_id', 'observer_id', 'receiving_scope'):
             identifier(config[k])
         targets = config['targets']
-        if not 1 <= len(targets) <= 16 or len({t['id'] for t in targets}) != len(targets):
+        app_checks = sum(t.get('kind') == 'conversation_access' for t in targets)
+        if (app_checks > 1 or not 1 <= len(targets) <= 16 + app_checks
+                or len({t['id'] for t in targets}) != len(targets)):
             raise ValueError('bounded unique target selection required')
         if sum(len(t['endpoints']) for t in targets if t.get('kind')=='https_health_group' and isinstance(t.get('endpoints'),list))>4:
             raise ValueError('at most four external HTTPS health endpoints per observer')
@@ -319,6 +366,16 @@ class Monitor:
                         or any(not isinstance(arg, str) or not arg or len(arg) > 4096 for arg in command)
                         or not Path(command[0]).is_absolute()):
                     raise ValueError('explicit bounded provider health adapter required')
+            elif target['kind'] == 'conversation_access':
+                command = target.get('command')
+                if (set(target) != {'id', 'resource_ref', 'kind', 'command'}
+                        or not isinstance(command, list) or not 3 <= len(command) <= 10
+                        or any(not isinstance(arg, str) or not arg or len(arg) > 2048 for arg in command)
+                        or not Path(command[0]).is_absolute() or not Path(command[1]).is_absolute()
+                        or len(set(command[2:])) != len(command[2:])
+                        or any(not re.fullmatch(r'https://[a-z0-9-]{1,63}\.dmn\.homes', origin)
+                               for origin in command[2:])):
+                    raise ValueError('select one owning Conversation access probe and fixed Home roster')
             elif target['kind'] in ('webbridge', 'http_health'):
                 local_url(target['base_url'])
             elif target['kind']=='https_health_group':
@@ -696,6 +753,21 @@ class Monitor:
         if not active and (not prior or prior['processing_state'] == 'resolved'):
             return
         summary = target['id'] + ': ' + reason.replace('_', ' ') + '.'
+        unavailable = [row['id'] for row in target.get('_conversation_receivers', ())
+                       if row['state'] != 'ready']
+        if unavailable:
+            homes = ', '.join(unavailable[:2])
+            if len(unavailable) > 2:
+                homes += f' and {len(unavailable)-2} more'
+            summary = f'Conversation access unavailable on {homes}.'
+        elif target['kind'] == 'conversation_access' and prior:
+            prefix = 'Conversation access unavailable on '
+            previous = prior['summary']
+            if previous.startswith(prefix):
+                if reason == 'healthy':
+                    summary = 'Conversation access restored on ' + previous.removeprefix(prefix)
+                elif reason == 'observation_unreadable':
+                    summary = previous
         severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
         if prior and prior['processing_state'] == 'open':
             if active and prior['summary'] == summary:
@@ -713,6 +785,8 @@ class Monitor:
                          severity=severity, processing_state='open', summary=summary,
                          action=('Provider login must be renewed with the existing selected account when required. Verify authenticated native provider access after recovery. A running process or public health page is insufficient. Never replay failed messages or replace accounts automatically.'
                                  if target['kind'] == 'provider_auth' else
+                                 'Check the per-Home Conversation access results. For a changed receiving binding, use the owning App requalification and verify access again. A public entry check does not sign in as a human.'
+                                 if target['kind'] == 'conversation_access' else
                                  'Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
                                  if target['kind'] in ('native_codex', 'incus_native', 'cgroup_memory', 'host_memory') else
                                  'Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.'),
@@ -778,9 +852,9 @@ class Monitor:
             if demand_unit:
                 selected['demand_unit'] = demand_unit
             try:
-                return check(selected), selected.get('_counters')
+                return check(selected), selected
             except Exception:
-                return 'observation_unreadable', None
+                return 'observation_unreadable', target
         def observations():
             nonlocal available
             native = [t for t in targets if t['kind'] == 'incus_native']
@@ -808,7 +882,8 @@ class Monitor:
                         heartbeat_at = time.monotonic() + 10
                     for future in done:
                         yield pending.pop(future), future.result()
-        for target, (reason, counters) in observations():
+        for target, (reason, observed) in observations():
+            counters = observed.get('_counters')
             try:
                 if counters is not None:
                     prior = self.db.execute('SELECT content FROM runtime_counters WHERE id=?',
@@ -826,12 +901,15 @@ class Monitor:
             observed_at = int(time.time()) if live_clock else now
             resolution_ready = (self.memory_resolution_ready(target, reason, counters, observed_at)
                                 if available else True)
-            rows.append(dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending'))
+            row = dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending')
+            if '_conversation_receivers' in observed:
+                row['receivers'] = observed['_conversation_receivers']
+            rows.append(row)
             # Do not mutate uncertain revisions while acceptance is pending.
             if available:
                 # Unknown observation never resolves a retained outage.
                 if resolution_ready:
-                    self.transition(target, reason, observed_at)
+                    self.transition(observed, reason, observed_at)
                 # Retain the incident/outbox before consuming the counter edge.
                 # Service outage or a crash must not erase an observed restart.
                 if counters is not None:
