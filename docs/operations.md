@@ -182,6 +182,15 @@ reuses the evidence without calling the handler. A failed or uncertain recovery
 intent requires inspection. Verify the original incident becomes resolved at a
 higher accepted revision and check the source bytes through the receiving inbox.
 
+A forward reader can reach end of file after retaining a closed turn with no
+verifiable scope. Its bytes remain in the native original, and the source
+still has an open capture incident. Later hooks keep reading authorized new
+turns. When the reader again reaches end of file with that source's retained
+scope gap, supervision links the observation to the existing open incident
+without allocating an additional unresolved slot. A linked observation cannot
+serve as recovery or exclusion evidence. Other failures and uncertain attempts
+retain separate receipts.
+
 A verified scope exclusion is different from recovered source bytes. Reinvoke
 the selected capture handler under the unchanged binding; a matching later
 `skipped` attempt must retain a closed exclusion reason. Then use
