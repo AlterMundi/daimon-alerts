@@ -182,6 +182,20 @@ def read_status(client, request, process, diagnostic):
     return response, attempt+1
 
 
+def acquire_probe_lock(lock):
+    # An overlapping operator read is not evidence that Matrix is down.
+    deadline = time.monotonic() + 1.5
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LocalHealthFailure('matrix_probe_contended') from None
+            time.sleep(min(0.05, remaining))
+
+
 def inspect(config, diagnostic=None):
     diagnostic = {} if diagnostic is None else diagnostic
     diagnostic['stage'] = 'sdk_import'
@@ -203,7 +217,7 @@ def inspect(config, diagnostic=None):
     if state.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError('private probe state required')
     with (state / 'lock').open('a+b') as lock, ConnectedProcessObserver() as observer:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        acquire_probe_lock(lock)
         diagnostic['stage'] = 'peer_connect'
         # Establish the actual peer before selecting the retained read token.
         with socket.socket(socket.AF_UNIX) as connection:
@@ -262,7 +276,17 @@ def main():
         # No daemon exception, private path, credential or source text escapes.
         retain_failure(config, diagnostic, error)
         return 1
-    print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v1', ready=result)))
+    if not result and diagnostic.get('roster_error'):
+        state = {
+            'reader_roster_invalid': 'matrix_roster_invalid',
+            'reader_roster_unavailable': (
+                'matrix_roster_contended' if diagnostic.get('retryable')
+                else 'matrix_roster_unavailable'
+            ),
+        }[diagnostic['roster_error']]
+        print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v2', state=state)))
+    else:
+        print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v1', ready=result)))
     return 0
 
 

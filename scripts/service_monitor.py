@@ -42,6 +42,13 @@ def read_json(url, payload=None):
     return json.loads(raw)
 
 
+MATRIX_RECEIVING_STATES = {
+    'matrix_local_capability_expiring', 'matrix_listener_unavailable',
+    'matrix_probe_contended', 'matrix_roster_contended', 'matrix_roster_invalid',
+    'matrix_roster_unavailable',
+}
+
+
 def matrix_receiving(command):
     # The operator-selected adapter authenticates the current application,
     # not merely its systemd process. It returns no speech or private state.
@@ -53,7 +60,7 @@ def matrix_receiving(command):
         value = json.loads(result.stdout)
         if (set(value) == {'schema', 'state'}
                 and value['schema'] == 'dm.monitor.matrix-receiving/v2'
-                and value['state'] in {'matrix_local_capability_expiring', 'matrix_listener_unavailable'}):
+                and value['state'] in MATRIX_RECEIVING_STATES):
             return value['state']
         if (set(value) != {'schema', 'ready'}
                 or value['schema'] != 'dm.monitor.matrix-receiving/v1'
@@ -332,7 +339,7 @@ REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observa
            'provider_login_required', 'provider_unavailable',
            'conversation_access_needs_requalification', 'conversation_entry_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
-           'matrix_reader_unavailable', 'matrix_local_capability_expiring', 'matrix_listener_unavailable',
+           'matrix_reader_unavailable', *MATRIX_RECEIVING_STATES,
            'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
 
 

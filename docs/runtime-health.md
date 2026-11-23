@@ -507,3 +507,11 @@ contention with finite backoff (100, 300, 700, 1200 ms). All reads still share
 the original eight-second absolute client deadline and process binding.
 Persistent contention, invalid roster, bad authentication and a changed
 process still fail readiness. No service start is attempted for this result.
+
+If an operator check overlaps a scheduled check, the probe waits up to 1.5
+seconds for the shared status request lock. Persistent probe contention is
+reported as probe contention, without claiming the Matrix reader failed.
+An authenticated roster observation distinguishes transient database contention,
+an unavailable roster and an invalid roster. The monitor retains those typed
+opening observations alongside each incident's verified resolution and any
+matching repair receipt.
