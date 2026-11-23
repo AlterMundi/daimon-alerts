@@ -760,6 +760,14 @@ class Monitor:
             if len(unavailable) > 2:
                 homes += f' and {len(unavailable)-2} more'
             summary = f'Conversation access unavailable on {homes}.'
+        elif target['kind'] == 'conversation_access' and prior:
+            prefix = 'Conversation access unavailable on '
+            previous = prior['summary']
+            if previous.startswith(prefix):
+                if reason == 'healthy':
+                    summary = 'Conversation access restored on ' + previous.removeprefix(prefix)
+                elif reason == 'observation_unreadable':
+                    summary = previous
         severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
         if prior and prior['processing_state'] == 'open':
             if active and prior['summary'] == summary:

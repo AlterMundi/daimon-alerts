@@ -479,7 +479,9 @@ Home slug and the closed App observation state. Use those rows for the owning
 Sysops handoff, including when one receiver has a binding failure and another
 has a transport failure. Missing rows indicate unavailable observation. The
 group keeps one incident and reports affected Home names without exposing
-response bodies or adding another probe.
+response bodies or adding another probe. The resolved incident retains the
+last named affected Homes. An unreadable observation preserves those names
+and leaves the incident open until the full roster is healthy.
 
 Inspect the App probe's per-origin result to locate an affected receiver.
 Use the owning App requalification for a known binding change. Preserve

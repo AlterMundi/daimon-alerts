@@ -295,11 +295,14 @@ class Durable(unittest.TestCase):
             self.assertEqual(self.sent[-1]['summary'], 'Conversation access unavailable on first, second.')
             with patch('service_monitor.subprocess.run', return_value=result(['ready'], 0)):
                 self.assertNotIn('receivers', monitor.tick(now=11)['targets'][0])
+            self.assertEqual(len(self.sent), 1)
             self.assertEqual(self.sent[-1]['processing_state'], 'open')
             with patch('service_monitor.subprocess.run', return_value=result(['ready', 'ready'], 0)):
                 self.assertEqual(monitor.tick(now=12)['targets'][0]['state'], 'healthy')
             self.assertEqual(self.sent[-1]['processing_state'], 'resolved')
+            self.assertEqual(self.sent[-1]['summary'], 'Conversation access restored on first, second.')
             self.assertEqual(self.sent[0]['incident_id'], self.sent[-1]['incident_id'])
+            self.assertEqual(self.sent[-1]['revision'], 2)
         finally:
             monitor.close()
 
