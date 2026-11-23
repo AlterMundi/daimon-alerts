@@ -69,19 +69,20 @@ def roster_unavailable(status):
         return roster
     return None
 
-def ready(status, server, required, now_ms):
+def readiness_problem(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
     loaded = status['loaded_runtime']
     gate = status['receiving']['channels']['tribe']
     roster = status['receiving']['rosters']['tribe']
-    if (gate.get('controlled') is not True or gate.get('phase') != 'select'
-            or loaded['local_origin'] != server or gate['process_id'] != loaded['process_id']):
-        return False
+    if gate.get('controlled') is not True or gate.get('phase') != 'select':
+        return 'matrix_gate_not_selected'
+    if loaded['local_origin'] != server or gate['process_id'] != loaded['process_id']:
+        return 'matrix_runtime_binding_changed'
     if roster_unavailable(status) is not None:
-        return False
+        return 'matrix_roster_unavailable'
     readers = gate['readers']
     if not reader_coverage(readers, required, roster['audience']):
-        return False
+        return 'matrix_reader_coverage_incomplete'
     audience = {(r['being_ref'], r['embodiment_id'], r['credential_id']) for r in roster['audience']}
     epochs = set(roster['required_authority_epochs'])
     for reader in readers:
@@ -90,12 +91,16 @@ def ready(status, server, required, now_ms):
                 or not epochs <= set(reader['authority_epochs'])
                 or not {'dm.tribe.conversation/v1', 'dm.tribe.direct-conversation/v1'} <= set(reader['wire_read'])
                 or (reader['being_ref'], reader['embodiment_id'], reader['credential_id']) not in audience):
-            return False
+            return 'matrix_reader_authority_unavailable'
     own = [r for r in readers if r['embodiment_id'] == server['embodiment_id']]
     # The native gate binds this live process and authenticated reader contract.
     # Preserve the installed compatible-startup recovery: software/view hashes
     # describe the retained selection, not necessarily today's package bytes.
-    return len(own) == 1
+    return None if len(own) == 1 else 'matrix_reader_coverage_incomplete'
+
+
+def ready(status, server, required, now_ms):
+    return readiness_problem(status, server, required, now_ms) is None
 
 
 def retain_failure(config, diagnostic, error):
@@ -263,11 +268,15 @@ def inspect(config, diagnostic=None):
         diagnostic['stage'] = 'process_verify'
         observer.verify()
         diagnostic['stage'] = 'reader_check'
-        result = ready(response['result'], response['server'], config['required_readers'], time.time_ns()//1_000_000)
+        problem = readiness_problem(response['result'], response['server'],
+                                    config['required_readers'], time.time_ns()//1_000_000)
+        result = problem is None
         if 'roster_error' in diagnostic:
             diagnostic['status_reads'] = status_reads
             diagnostic['recovered_within_read'] = result
             retain_failure(config, diagnostic, ValueError())
+        if problem and roster_unavailable(response['result']) is None:
+            raise LocalHealthFailure(problem)
         return result
 
 

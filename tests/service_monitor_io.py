@@ -223,6 +223,8 @@ class Probes(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs['timeout'], 12)
         for state in ('matrix_local_capability_expiring', 'matrix_listener_unavailable',
                       'matrix_probe_contended', 'matrix_roster_contended',
+                      'matrix_gate_not_selected', 'matrix_runtime_binding_changed',
+                      'matrix_reader_coverage_incomplete', 'matrix_reader_authority_unavailable',
                       'matrix_roster_invalid', 'matrix_roster_unavailable',
                       'matrix_status_socket_missing', 'matrix_status_socket_refused',
                       'matrix_status_socket_timeout'):
@@ -478,6 +480,31 @@ class Durable(unittest.TestCase):
             monitor.flush()
             self.assertEqual(monitor.heartbeat_report()['incidents'][0]['acceptance'],'accepted')
         finally:monitor.close()
+
+    def test_matrix_review_trigger_ignores_unrelated_incidents_and_list_truncation(self):
+        reader = dict(id='matrix', resource_ref='body', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+        browser = self.config['targets'][0]
+        monitor = Monitor(dict(self.config, targets=[reader, browser]), self.client)
+        try:
+            monitor.tick(lambda target: 'unit_inactive' if target['id'] == 'matrix'
+                         else 'healthy', now=10)
+            first = monitor.heartbeat_report()
+            self.assertEqual(first['matrix_review']['matrix']['processing_state'], 'open')
+            monitor.tick(lambda target: 'healthy' if target['id'] == 'matrix'
+                         else 'extension_disconnected', now=11)
+            recovered = monitor.heartbeat_report()
+            self.assertEqual(recovered['matrix_review']['matrix']['processing_state'], 'resolved')
+            self.assertEqual(recovered['matrix_review']['matrix']['revision'], 2)
+            for index in range(40):
+                monitor.transition(dict(browser, id='other'+str(index)),
+                                   'extension_disconnected', 20+index)
+            crowded = monitor.heartbeat_report()
+            self.assertTrue(crowded['more_incidents'])
+            self.assertNotIn('service-matrix', [row['operation_id'] for row in crowded['incidents']])
+            self.assertEqual(crowded['matrix_review'], recovered['matrix_review'])
+        finally:
+            monitor.close()
 
     def test_heartbeat_report_bounds_output_and_refuses_pending_file_alias(self):
         monitor=Monitor(self.config,self.client)
