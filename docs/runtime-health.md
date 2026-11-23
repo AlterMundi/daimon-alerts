@@ -522,3 +522,15 @@ connection timeout. These are observations about the configured socket; only
 the lifecycle record establishes whether a deployment was in progress. Keep
 monitoring during updates and require a successful authenticated read for
 recovery.
+
+
+For an authenticated Matrix unit that recently left its active state cleanly,
+the observer reports recovery pending for missing/refused startup sockets and
+unit transitions for up to 75 seconds from the systemd active exit timestamp.
+The clock starts at the exit, regardless of when the observer next runs.
+A failure result, systemd automatic restarts, an invalid reader response, or a
+missing lifecycle observation gets ordinary alert handling. This is evidence of
+an orderly transition, not attribution to an operator or a specific deployment.
+An outage already open remains open, and a fresh authenticated read is still
+required to close it. The observer uses its existing schedule and continues
+probing throughout the window.

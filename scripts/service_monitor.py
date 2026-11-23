@@ -167,6 +167,34 @@ def conversation_access(target):
         return 'observation_unreadable'
 
 
+# Bound startup by the original active exit, not by the last failed probe.
+# The observer still requires the authenticated reader for a healthy result.
+MATRIX_RESTART_GRACE_SECONDS = 75
+MATRIX_RESTART_TRANSIENT_STATES = {
+    'unit_inactive', 'matrix_status_socket_missing', 'matrix_status_socket_refused',
+}
+
+
+def matrix_restart_pending(properties, reason, now):
+    if (reason not in MATRIX_RESTART_TRANSIENT_STATES
+            or properties.get('ActiveState') not in ('deactivating', 'inactive', 'activating', 'active')
+            or properties.get('Result') != 'success'
+            or properties.get('NRestarts') != '0'):
+        return False
+    try:
+        exited = int(properties.get('ActiveExitTimestampMonotonic', '0'))
+        age = now - exited / 1_000_000
+        if exited <= 0 or not 0 <= age < MATRIX_RESTART_GRACE_SECONDS:
+            return False
+        # A previous long-running generation must have actually exited. A
+        # single incomplete start on boot has no grace.
+        if properties['ActiveState'] == 'active':
+            return int(properties.get('ActiveEnterTimestampMonotonic', '0')) > exited
+        return True
+    except ValueError:
+        return False
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
     if target['kind'] == 'conversation_access':
@@ -281,14 +309,23 @@ def probe(target):
             return 'observation_unreadable'
     if target['kind'] == 'unit':
         command = ['systemctl'] + (['--user'] if target.get('scope', 'user') == 'user' else [])
-        command += ['show', target['unit'], '--property=LoadState,ActiveState']
+        reader = target.get('receiving_command')
+        fields = 'LoadState,ActiveState'
+        if reader:
+            fields += ',Result,NRestarts,ActiveExitTimestampMonotonic,ActiveEnterTimestampMonotonic'
+        command += ['show', target['unit'], '--property=' + fields]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=3)
             props = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
-            if (result.returncode != 0 or props.get('LoadState') != 'loaded'
-                    or props.get('ActiveState') != 'active'):
-                return 'unit_inactive'
-            return matrix_receiving(target['receiving_command']) if 'receiving_command' in target else 'healthy'
+            if result.returncode != 0 or props.get('LoadState') != 'loaded':
+                return 'observation_unreadable' if reader else 'unit_inactive'
+            if props.get('ActiveState') == 'active':
+                reason = matrix_receiving(reader) if reader else 'healthy'
+            else:
+                reason = 'unit_inactive'
+            if reader and matrix_restart_pending(props, reason, time.monotonic()):
+                target['_matrix_restart_pending'] = True
+            return reason
         except (OSError, subprocess.TimeoutExpired):
             return 'observation_unreadable'
     # An explicitly stopped on-demand browser is available to start, not healthy
@@ -968,14 +1005,16 @@ class Monitor:
             observed_at = int(time.time()) if live_clock else now
             resolution_ready = (self.memory_resolution_ready(target, reason, counters, observed_at)
                                 if available else True)
-            row = dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending')
+            transition_pending = observed.get('_matrix_restart_pending', False)
+            row = dict(id=target['id'],
+                       state=reason if resolution_ready and not transition_pending else 'recovery_pending')
             if '_conversation_receivers' in observed:
                 row['receivers'] = observed['_conversation_receivers']
             rows.append(row)
             # Do not mutate uncertain revisions while acceptance is pending.
             if available:
                 # Unknown observation never resolves a retained outage.
-                if resolution_ready:
+                if resolution_ready and not transition_pending:
                     self.transition(observed, reason, observed_at)
                 # Retain the incident/outbox before consuming the counter edge.
                 # Service outage or a crash must not erase an observed restart.

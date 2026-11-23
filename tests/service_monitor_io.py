@@ -18,6 +18,37 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_matrix_reader_only_defers_recent_orderly_transitions(self):
+        from subprocess import CompletedProcess
+        target = dict(id='matrix', resource_ref='host', kind='unit', unit='matrix.service',
+                      scope='system', receiving_command=['/selected-reader'])
+        cases = [
+            ('inactive', 'success', '0', '100000000', 164, 'healthy', 'unit_inactive', True),
+            ('active', 'success', '0', '100000000', 164, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', True),
+            ('active', 'success', '0', '100000000', 175, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', False),
+            ('active', 'success', '0', '100000000', 164, 'healthy', 'healthy', False),
+            ('active', 'success', '1', '100000000', 164, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', False),
+            ('active', 'success', '0', '0', 164, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', False),
+            ('active', 'success', '0', '100000000', 164, 'matrix_roster_invalid',
+             'matrix_roster_invalid', False),
+            ('failed', 'exit-code', '0', '100000000', 164, 'healthy', 'unit_inactive', False),
+        ]
+        for state, result, restarts, exited, now, reading, expected, pending in cases:
+            with self.subTest(state=state, result=result, reading=reading, now=now):
+                props = (f'LoadState=loaded\nActiveState={state}\nResult={result}\n'
+                         f'NRestarts={restarts}\nActiveExitTimestampMonotonic={exited}\n'
+                         'ActiveEnterTimestampMonotonic=150000000\n')
+                selected = dict(target)
+                with patch('service_monitor.subprocess.run', return_value=CompletedProcess(
+                        [], 0, stdout=props)), patch('service_monitor.matrix_receiving',
+                        return_value=reading), patch('service_monitor.time.monotonic', return_value=now):
+                    self.assertEqual(probe(selected), expected)
+                self.assertEqual(selected.get('_matrix_restart_pending', False), pending)
+
     def test_conversation_access_requires_full_roster_and_reports_binding_failure(self):
         from subprocess import CompletedProcess
         origins = ['https://first.dmn.homes', 'https://second.dmn.homes']
@@ -366,6 +397,31 @@ class Durable(unittest.TestCase):
             self.assertNotIn('base_url',path.read_text())
             self.assertEqual(len(self.sent),2) # Reporting emits no network call.
         finally:monitor.close()
+
+    def test_matrix_restart_window_preserves_open_incident_until_authenticated(self):
+        reader = dict(id='matrix', resource_ref='host', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+
+        def starting(target):
+            target['_matrix_restart_pending'] = True
+            return 'matrix_status_socket_missing'
+
+        monitor = Monitor(dict(self.config, targets=[reader]), self.client)
+        try:
+            pending = monitor.tick(starting, now=10)
+            self.assertEqual(pending['targets'], [dict(id='matrix', state='recovery_pending')])
+            self.assertEqual(monitor.heartbeat_report()['incidents'], [])
+            monitor.tick(lambda _: 'matrix_status_socket_missing', now=85)
+            opened, = monitor.heartbeat_report()['incidents']
+            self.assertEqual(opened['processing_state'], 'open')
+            monitor.tick(starting, now=86)
+            self.assertEqual(monitor.heartbeat_report()['incidents'], [opened])
+            monitor.tick(lambda _: 'healthy', now=87)
+            closed, = monitor.heartbeat_report()['incidents']
+            self.assertEqual(closed['incident_id'], opened['incident_id'])
+            self.assertEqual(closed['resolution_evidence']['authenticated_reader'], 'verified')
+        finally:
+            monitor.close()
 
     def test_heartbeat_report_distinguishes_authenticated_resolution_from_standby(self):
         reader = dict(id='matrix', resource_ref='host', kind='unit',
