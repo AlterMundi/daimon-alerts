@@ -66,7 +66,8 @@ def project(worker, incident, learning, peer, supervisor, now, freshness):
             "state": label(capture.get("state"), states),
             "processed_through": count(capture.get("processed_through")),
             "reason": label(capture.get("reason_code"), {
-                "source_context_budget_exceeded", "navigation_budget_exhausted", "waiting_for_capture"}),
+                "source_context_budget_exceeded", "navigation_budget_exhausted", "waiting_for_capture",
+                "dispatch_unresolved"}),
             "minimum_required_bytes": count(capture.get("minimum_required_bytes")),
             "proposer_invoked": capture.get("proposer_invoked") if type(capture.get("proposer_invoked")) is bool else None,
         },
