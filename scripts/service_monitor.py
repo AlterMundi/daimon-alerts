@@ -46,6 +46,8 @@ MATRIX_RECEIVING_STATES = {
     'matrix_local_capability_expiring', 'matrix_listener_unavailable',
     'matrix_probe_contended', 'matrix_roster_contended', 'matrix_roster_invalid',
     'matrix_roster_unavailable', 'matrix_status_socket_missing',
+    'matrix_gate_not_selected', 'matrix_runtime_binding_changed',
+    'matrix_reader_coverage_incomplete', 'matrix_reader_authority_unavailable',
     'matrix_status_socket_refused', 'matrix_status_socket_timeout',
 }
 
@@ -167,6 +169,34 @@ def conversation_access(target):
         return 'observation_unreadable'
 
 
+# Bound startup by the original active exit, not by the last failed probe.
+# The observer still requires the authenticated reader for a healthy result.
+MATRIX_RESTART_GRACE_SECONDS = 75
+MATRIX_RESTART_TRANSIENT_STATES = {
+    'unit_inactive', 'matrix_status_socket_missing', 'matrix_status_socket_refused',
+}
+
+
+def matrix_restart_pending(properties, reason, now):
+    if (reason not in MATRIX_RESTART_TRANSIENT_STATES
+            or properties.get('ActiveState') not in ('deactivating', 'inactive', 'activating', 'active')
+            or properties.get('Result') != 'success'
+            or properties.get('NRestarts') != '0'):
+        return False
+    try:
+        exited = int(properties.get('ActiveExitTimestampMonotonic', '0'))
+        age = now - exited / 1_000_000
+        if exited <= 0 or not 0 <= age < MATRIX_RESTART_GRACE_SECONDS:
+            return False
+        # A previous long-running generation must have actually exited. A
+        # single incomplete start on boot has no grace.
+        if properties['ActiveState'] == 'active':
+            return int(properties.get('ActiveEnterTimestampMonotonic', '0')) > exited
+        return True
+    except ValueError:
+        return False
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
     if target['kind'] == 'conversation_access':
@@ -281,14 +311,23 @@ def probe(target):
             return 'observation_unreadable'
     if target['kind'] == 'unit':
         command = ['systemctl'] + (['--user'] if target.get('scope', 'user') == 'user' else [])
-        command += ['show', target['unit'], '--property=LoadState,ActiveState']
+        reader = target.get('receiving_command')
+        fields = 'LoadState,ActiveState'
+        if reader:
+            fields += ',Result,NRestarts,ActiveExitTimestampMonotonic,ActiveEnterTimestampMonotonic'
+        command += ['show', target['unit'], '--property=' + fields]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=3)
             props = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
-            if (result.returncode != 0 or props.get('LoadState') != 'loaded'
-                    or props.get('ActiveState') != 'active'):
-                return 'unit_inactive'
-            return matrix_receiving(target['receiving_command']) if 'receiving_command' in target else 'healthy'
+            if result.returncode != 0 or props.get('LoadState') != 'loaded':
+                return 'observation_unreadable' if reader else 'unit_inactive'
+            if props.get('ActiveState') == 'active':
+                reason = matrix_receiving(reader) if reader else 'healthy'
+            else:
+                reason = 'unit_inactive'
+            if reader and matrix_restart_pending(props, reason, time.monotonic()):
+                target['_matrix_restart_pending'] = True
+            return reason
         except (OSError, subprocess.TimeoutExpired):
             return 'observation_unreadable'
     # An explicitly stopped on-demand browser is available to start, not healthy
@@ -747,13 +786,29 @@ class Monitor:
                     else self.reader_repair_state(target_id, value['incident_id'])
                 )
             incidents.append(incident)
+        # Keep the Matrix review trigger independent of other services and of
+        # the ordering/truncation of the general incident list.
+        matrix_review = {}
+        for target_id in sorted(authenticated_targets):
+            row = self.db.execute(
+                "SELECT content, EXISTS(SELECT 1 FROM outbox WHERE "
+                "json_extract(outbox.content,'$.incident_id')=json_extract(i.content,'$.incident_id') "
+                "AND json_extract(outbox.content,'$.revision')<=json_extract(i.content,'$.revision')) "
+                "FROM incidents AS i WHERE id=?", (target_id,),
+            ).fetchone()
+            if row is not None:
+                value, pending = json.loads(row[0]), row[1]
+                matrix_review[target_id] = {
+                    **{key: value[key] for key in ('incident_id', 'revision', 'processing_state')},
+                    'acceptance': 'pending' if pending else 'accepted',
+                }
         status = self.db.execute('SELECT value FROM status').fetchone()
         status = json.loads(status[0]) if status else {}
         report = dict(schema='daimon-alerts.heartbeat-report/v1',
             producer_id=self.config['producer_id'],
             checked_at=status.get('checked_at'),
             service_state=status.get('service_state', 'unobserved'),
-            incidents=incidents, more_incidents=len(rows) > 32)
+            incidents=incidents, more_incidents=len(rows) > 32, matrix_review=matrix_review)
         raw = (json.dumps(report, sort_keys=True) + '\n').encode()
         if len(raw) > 65536:
             raise ValueError('bounded heartbeat report required')
@@ -968,14 +1023,16 @@ class Monitor:
             observed_at = int(time.time()) if live_clock else now
             resolution_ready = (self.memory_resolution_ready(target, reason, counters, observed_at)
                                 if available else True)
-            row = dict(id=target['id'], state=reason if resolution_ready else 'recovery_pending')
+            transition_pending = observed.get('_matrix_restart_pending', False)
+            row = dict(id=target['id'],
+                       state=reason if resolution_ready and not transition_pending else 'recovery_pending')
             if '_conversation_receivers' in observed:
                 row['receivers'] = observed['_conversation_receivers']
             rows.append(row)
             # Do not mutate uncertain revisions while acceptance is pending.
             if available:
                 # Unknown observation never resolves a retained outage.
-                if resolution_ready:
+                if resolution_ready and not transition_pending:
                     self.transition(observed, reason, observed_at)
                 # Retain the incident/outbox before consuming the counter edge.
                 # Service outage or a crash must not erase an observed restart.

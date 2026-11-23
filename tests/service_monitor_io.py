@@ -18,6 +18,37 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_matrix_reader_only_defers_recent_orderly_transitions(self):
+        from subprocess import CompletedProcess
+        target = dict(id='matrix', resource_ref='host', kind='unit', unit='matrix.service',
+                      scope='system', receiving_command=['/selected-reader'])
+        cases = [
+            ('inactive', 'success', '0', '100000000', 164, 'healthy', 'unit_inactive', True),
+            ('active', 'success', '0', '100000000', 164, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', True),
+            ('active', 'success', '0', '100000000', 175, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', False),
+            ('active', 'success', '0', '100000000', 164, 'healthy', 'healthy', False),
+            ('active', 'success', '1', '100000000', 164, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', False),
+            ('active', 'success', '0', '0', 164, 'matrix_status_socket_missing',
+             'matrix_status_socket_missing', False),
+            ('active', 'success', '0', '100000000', 164, 'matrix_roster_invalid',
+             'matrix_roster_invalid', False),
+            ('failed', 'exit-code', '0', '100000000', 164, 'healthy', 'unit_inactive', False),
+        ]
+        for state, result, restarts, exited, now, reading, expected, pending in cases:
+            with self.subTest(state=state, result=result, reading=reading, now=now):
+                props = (f'LoadState=loaded\nActiveState={state}\nResult={result}\n'
+                         f'NRestarts={restarts}\nActiveExitTimestampMonotonic={exited}\n'
+                         'ActiveEnterTimestampMonotonic=150000000\n')
+                selected = dict(target)
+                with patch('service_monitor.subprocess.run', return_value=CompletedProcess(
+                        [], 0, stdout=props)), patch('service_monitor.matrix_receiving',
+                        return_value=reading), patch('service_monitor.time.monotonic', return_value=now):
+                    self.assertEqual(probe(selected), expected)
+                self.assertEqual(selected.get('_matrix_restart_pending', False), pending)
+
     def test_conversation_access_requires_full_roster_and_reports_binding_failure(self):
         from subprocess import CompletedProcess
         origins = ['https://first.dmn.homes', 'https://second.dmn.homes']
@@ -192,6 +223,8 @@ class Probes(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs['timeout'], 12)
         for state in ('matrix_local_capability_expiring', 'matrix_listener_unavailable',
                       'matrix_probe_contended', 'matrix_roster_contended',
+                      'matrix_gate_not_selected', 'matrix_runtime_binding_changed',
+                      'matrix_reader_coverage_incomplete', 'matrix_reader_authority_unavailable',
                       'matrix_roster_invalid', 'matrix_roster_unavailable',
                       'matrix_status_socket_missing', 'matrix_status_socket_refused',
                       'matrix_status_socket_timeout'):
@@ -367,6 +400,31 @@ class Durable(unittest.TestCase):
             self.assertEqual(len(self.sent),2) # Reporting emits no network call.
         finally:monitor.close()
 
+    def test_matrix_restart_window_preserves_open_incident_until_authenticated(self):
+        reader = dict(id='matrix', resource_ref='host', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+
+        def starting(target):
+            target['_matrix_restart_pending'] = True
+            return 'matrix_status_socket_missing'
+
+        monitor = Monitor(dict(self.config, targets=[reader]), self.client)
+        try:
+            pending = monitor.tick(starting, now=10)
+            self.assertEqual(pending['targets'], [dict(id='matrix', state='recovery_pending')])
+            self.assertEqual(monitor.heartbeat_report()['incidents'], [])
+            monitor.tick(lambda _: 'matrix_status_socket_missing', now=85)
+            opened, = monitor.heartbeat_report()['incidents']
+            self.assertEqual(opened['processing_state'], 'open')
+            monitor.tick(starting, now=86)
+            self.assertEqual(monitor.heartbeat_report()['incidents'], [opened])
+            monitor.tick(lambda _: 'healthy', now=87)
+            closed, = monitor.heartbeat_report()['incidents']
+            self.assertEqual(closed['incident_id'], opened['incident_id'])
+            self.assertEqual(closed['resolution_evidence']['authenticated_reader'], 'verified')
+        finally:
+            monitor.close()
+
     def test_heartbeat_report_distinguishes_authenticated_resolution_from_standby(self):
         reader = dict(id='matrix', resource_ref='host', kind='unit',
                       unit='matrix.service', receiving_command=['/selected-reader'])
@@ -422,6 +480,31 @@ class Durable(unittest.TestCase):
             monitor.flush()
             self.assertEqual(monitor.heartbeat_report()['incidents'][0]['acceptance'],'accepted')
         finally:monitor.close()
+
+    def test_matrix_review_trigger_ignores_unrelated_incidents_and_list_truncation(self):
+        reader = dict(id='matrix', resource_ref='body', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+        browser = self.config['targets'][0]
+        monitor = Monitor(dict(self.config, targets=[reader, browser]), self.client)
+        try:
+            monitor.tick(lambda target: 'unit_inactive' if target['id'] == 'matrix'
+                         else 'healthy', now=10)
+            first = monitor.heartbeat_report()
+            self.assertEqual(first['matrix_review']['matrix']['processing_state'], 'open')
+            monitor.tick(lambda target: 'healthy' if target['id'] == 'matrix'
+                         else 'extension_disconnected', now=11)
+            recovered = monitor.heartbeat_report()
+            self.assertEqual(recovered['matrix_review']['matrix']['processing_state'], 'resolved')
+            self.assertEqual(recovered['matrix_review']['matrix']['revision'], 2)
+            for index in range(40):
+                monitor.transition(dict(browser, id='other'+str(index)),
+                                   'extension_disconnected', 20+index)
+            crowded = monitor.heartbeat_report()
+            self.assertTrue(crowded['more_incidents'])
+            self.assertNotIn('service-matrix', [row['operation_id'] for row in crowded['incidents']])
+            self.assertEqual(crowded['matrix_review'], recovered['matrix_review'])
+        finally:
+            monitor.close()
 
     def test_heartbeat_report_bounds_output_and_refuses_pending_file_alias(self):
         monitor=Monitor(self.config,self.client)
