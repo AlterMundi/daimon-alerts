@@ -182,6 +182,16 @@ reuses the evidence without calling the handler. A failed or uncertain recovery
 intent requires inspection. Verify the original incident becomes resolved at a
 higher accepted revision and check the source bytes through the receiving inbox.
 
+When recent resolved attempts still fill the ordinary ledger, run the
+foreground control `capture_supervisor.py --archive-accepted --state-dir ...
+--observer-config ...`. Use the existing receiving observer configuration. The
+command compares the bound observer's accepted projection with the exact local
+terminal receipt. Accepted files move unchanged to the private
+`accepted-resolutions` directory. Unaccepted and open attempts stay in place.
+The archive holds at most 128 accepted files and retains the existing 24-hour
+local period. This does not acknowledge or remove Alerts history, perform
+capture or modify the observer.
+
 A forward reader can reach end of file after retaining a closed turn with no
 verifiable scope. Its bytes remain in the native original, and the source
 still has an open capture incident. Later hooks keep reading authorized new
