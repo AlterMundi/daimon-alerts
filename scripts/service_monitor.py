@@ -784,13 +784,29 @@ class Monitor:
                     else self.reader_repair_state(target_id, value['incident_id'])
                 )
             incidents.append(incident)
+        # Keep the Matrix review trigger independent of other services and of
+        # the ordering/truncation of the general incident list.
+        matrix_review = {}
+        for target_id in sorted(authenticated_targets):
+            row = self.db.execute(
+                "SELECT content, EXISTS(SELECT 1 FROM outbox WHERE "
+                "json_extract(outbox.content,'$.incident_id')=json_extract(i.content,'$.incident_id') "
+                "AND json_extract(outbox.content,'$.revision')<=json_extract(i.content,'$.revision')) "
+                "FROM incidents AS i WHERE id=?", (target_id,),
+            ).fetchone()
+            if row is not None:
+                value, pending = json.loads(row[0]), row[1]
+                matrix_review[target_id] = {
+                    **{key: value[key] for key in ('incident_id', 'revision', 'processing_state')},
+                    'acceptance': 'pending' if pending else 'accepted',
+                }
         status = self.db.execute('SELECT value FROM status').fetchone()
         status = json.loads(status[0]) if status else {}
         report = dict(schema='daimon-alerts.heartbeat-report/v1',
             producer_id=self.config['producer_id'],
             checked_at=status.get('checked_at'),
             service_state=status.get('service_state', 'unobserved'),
-            incidents=incidents, more_incidents=len(rows) > 32)
+            incidents=incidents, more_incidents=len(rows) > 32, matrix_review=matrix_review)
         raw = (json.dumps(report, sort_keys=True) + '\n').encode()
         if len(raw) > 65536:
             raise ValueError('bounded heartbeat report required')

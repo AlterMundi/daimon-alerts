@@ -341,6 +341,13 @@ are projected, open incidents first; `more_incidents` explicitly signals omitted
 entries. Use the existing authenticated paginated incident API for the remainder.
 Neither truncation nor an unavailable observer establishes health.
 
+A Matrix-only review task selects `/matrix_review` and `/service_state`.
+The bounded Matrix index contains current incident identities, revisions, states
+and acceptance for the configured authenticated readers. Unrelated service
+revisions and report reordering do not change this index. It retains Matrix
+change evidence independently of truncation in the general list. Read the
+matching full incident before any action.
+
 An explicitly selected existing heartbeat report source can compare `/incidents`,
 `/service_state` and `/more_incidents`, excluding the changing `/checked_at` clock
 from activation hashes. Check the report's observation time and the authenticated

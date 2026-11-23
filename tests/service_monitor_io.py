@@ -479,6 +479,31 @@ class Durable(unittest.TestCase):
             self.assertEqual(monitor.heartbeat_report()['incidents'][0]['acceptance'],'accepted')
         finally:monitor.close()
 
+    def test_matrix_review_trigger_ignores_unrelated_incidents_and_list_truncation(self):
+        reader = dict(id='matrix', resource_ref='body', kind='unit',
+                      unit='matrix.service', receiving_command=['/selected-reader'])
+        browser = self.config['targets'][0]
+        monitor = Monitor(dict(self.config, targets=[reader, browser]), self.client)
+        try:
+            monitor.tick(lambda target: 'unit_inactive' if target['id'] == 'matrix'
+                         else 'healthy', now=10)
+            first = monitor.heartbeat_report()
+            self.assertEqual(first['matrix_review']['matrix']['processing_state'], 'open')
+            monitor.tick(lambda target: 'healthy' if target['id'] == 'matrix'
+                         else 'extension_disconnected', now=11)
+            recovered = monitor.heartbeat_report()
+            self.assertEqual(recovered['matrix_review']['matrix']['processing_state'], 'resolved')
+            self.assertEqual(recovered['matrix_review']['matrix']['revision'], 2)
+            for index in range(40):
+                monitor.transition(dict(browser, id='other'+str(index)),
+                                   'extension_disconnected', 20+index)
+            crowded = monitor.heartbeat_report()
+            self.assertTrue(crowded['more_incidents'])
+            self.assertNotIn('service-matrix', [row['operation_id'] for row in crowded['incidents']])
+            self.assertEqual(crowded['matrix_review'], recovered['matrix_review'])
+        finally:
+            monitor.close()
+
     def test_heartbeat_report_bounds_output_and_refuses_pending_file_alias(self):
         monitor=Monitor(self.config,self.client)
         try:
