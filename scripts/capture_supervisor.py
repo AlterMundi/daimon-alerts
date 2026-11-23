@@ -47,11 +47,11 @@ def read(path):
         if len(raw)>16384:raise ValueError('bounded capture record required')
         return json.loads(raw)
 
-def attempt_record(path,expected_binding_hash):
+def attempt_record(path,expected_binding_hash,*,record_name=None):
     a=read(path)
     if (not isinstance(a,dict) or a.get('schema')!=SCHEMA or a.get('binding_sha256')!=expected_binding_hash or
             not isinstance(a.get('attempt_id'),str) or not re.fullmatch('[a-f0-9]{32}',a['attempt_id']) or
-            path.name!='attempt-'+a['attempt_id']+'.json' or
+            path.name!=(record_name or 'attempt-'+a['attempt_id']+'.json') or
             a.get('state') not in ('started','failed','complete','skipped','resolved','dismissed') or
             a.get('reason') not in REASONS|{None} or a.get('event') not in EVENTS|{None}):
         raise ValueError('capture receipt mismatch')
@@ -104,6 +104,44 @@ def begin(root,binding_hash,timeout,*,event=None,source_ref=None):
             started_ns=now,updated_ns=now,deadline_ns=now+int((timeout+2)*1e9),state='started',reason=None,event=event,source_ref=source_ref)
         path=root/('attempt-'+attempt['attempt_id']+'.json');atomic(path,attempt)
         return path,attempt
+
+def begin_recovery(root,binding_hash,timeout,target,event,source_ref):
+    """Bind an extra intent to one expired, identified attempt, not a new slot."""
+    if not re.fullmatch('[a-f0-9]{32}',target) or not 0.1<=timeout<=30:
+        raise ValueError('exact retained attempt and bounded recovery required')
+    path=root/('.recovery-'+target+'.json')
+    with open(root/'capture.lock','a+b') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        if read(root/'owner.json')!=dict(binding_sha256=binding_hash):
+            raise ValueError('capture binding changed')
+        old=attempt_record(root/('attempt-'+target+'.json'),binding_hash)
+        if not source_ref or not event or (old['event'],old['source_ref'])!=(event,source_ref):
+            raise ValueError('recovery source and event must match the retained attempt')
+        if old['state']=='resolved' and old.get('recovery_proof'):
+            return path,old['recovery_proof'],True
+        if old['state']!='failed' and not (old['state']=='started' and old['deadline_ns']<time.time_ns()):
+            raise ValueError('expired failed or uncertain attempt required')
+        if path.exists():
+            saved=attempt_record(path,binding_hash,record_name=path.name)
+            if saved.get('recovery_for')!=target or (saved['event'],saved['source_ref'])!=(event,source_ref):
+                raise ValueError('retained recovery intent differs')
+            if saved['state']!='complete':
+                raise ValueError('retained recovery is failed or uncertain; inspect before any retry')
+            return path,saved,True
+        now=time.time_ns()
+        attempt=dict(schema=SCHEMA,attempt_id=uuid.uuid4().hex,binding_sha256=binding_hash,
+            recovery_for=target,started_ns=now,updated_ns=now,deadline_ns=now+int((timeout+2)*1e9),
+            state='started',reason=None,event=event,source_ref=source_ref)
+        atomic(path,attempt)
+        return path,attempt,False
+
+
+def finish_recovery(root,target,path,attempt):
+    resolve(root,target,attempt['attempt_id'],proof_path=path)
+    path.unlink(missing_ok=True)
+    print(json.dumps(dict(capture_gap_resolved=True,source_preserved=True,processing_invoked=False)))
+    return 0
+
 
 def initialize(root,binding_hash):
     if not re.fullmatch('[a-f0-9]{64}',binding_hash):raise ValueError('selected binding digest required')
@@ -173,9 +211,16 @@ def invoke(args):
     # Codex runs terminal hooks synchronously and kills their process group at
     # three seconds. Include input/intent overhead, and retain time to commit
     # the failure receipt instead of advertising an impossible 30-second child.
-    terminal=event in {'SessionEnd','Interrupt'}
+    terminal=not args.recover_attempt and event in {'SessionEnd','Interrupt'}
     child_timeout=min(args.timeout_seconds,1.5) if terminal else args.timeout_seconds
-    path,attempt=begin(root,args.binding_sha256,child_timeout,event=event,source_ref=source_ref)
+    if args.recover_attempt:
+        if error:
+            raise ValueError('invalid recovery input')
+        path,attempt,reused=begin_recovery(root,args.binding_sha256,child_timeout,args.recover_attempt,event,source_ref)
+        if reused:
+            return finish_recovery(root,args.recover_attempt,path,attempt)
+    else:
+        path,attempt=begin(root,args.binding_sha256,child_timeout,event=event,source_ref=source_ref)
     output={};receipt_path=root/('.result-'+attempt['attempt_id']+'.json')
     try:
         if error:
@@ -200,6 +245,10 @@ def invoke(args):
             reason=None if receipt['capture_complete'] or receipt['skipped'] else receipt['reason'])
         if attempt['state']=='skipped' and receipt.get('exclusion_reason') in EXCLUSIONS:
             attempt['exclusion_reason']=receipt['exclusion_reason']
+        if args.recover_attempt and attempt['state']=='complete':
+            attempt['updated_ns']=time.time_ns()
+            atomic(path,attempt)
+            return finish_recovery(root,args.recover_attempt,path,attempt)
         return finish(path,attempt,output)
     finally:
         receipt_path.unlink(missing_ok=True)
@@ -207,6 +256,10 @@ def invoke(args):
 def finish(path,attempt,output=None):
     attempt['updated_ns']=time.time_ns();atomic(path,attempt)
     if output is None:output={'systemMessage':'HMK source capture not confirmed: '+attempt['reason']}
+    if 'recovery_for' in attempt:
+        if not output:output={'systemMessage':'HMK recovery did not preserve the selected source.'}
+        print(json.dumps(output))
+        return 1
     print(json.dumps(output));return 0
 
 def safe_projection(root,expected_binding_hash):
@@ -236,21 +289,33 @@ def safe_projection(root,expected_binding_hash):
             processing_state='resolved' if resolved else 'open',work_preserved=resolved and not excluded and not dismissed))
     return dict(items=items)
 
-def resolve(root,attempt_id,recovery_id,*,excluded=False):
+def resolve(root,attempt_id,recovery_id,*,excluded=False,proof_path=None):
     root=directory(root)
     if not all(re.fullmatch('[a-f0-9]{32}',x) for x in (attempt_id,recovery_id)):raise ValueError('retained attempt required')
     with open(root/'capture.lock','a+b') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         path=root/('attempt-'+attempt_id+'.json');owner=read(root/'owner.json')
-        old=attempt_record(path,owner['binding_sha256']);recovery=attempt_record(root/('attempt-'+recovery_id+'.json'),owner['binding_sha256'])
+        old=attempt_record(path,owner['binding_sha256'])
         kind='source_excluded' if excluded else 'source_captured'
         if old['state']=='resolved' and old.get('recovery_attempt_id')==recovery_id and old.get('resolution_kind','source_captured')==kind:return
+        if proof_path is not None:
+            expected=root/('.recovery-'+attempt_id+'.json')
+            if proof_path!=expected or excluded:
+                raise ValueError('exact recovery sidecar required')
+            recovery=attempt_record(expected,owner['binding_sha256'],record_name=expected.name)
+            if recovery.get('recovery_for')!=attempt_id or recovery['attempt_id']!=recovery_id:
+                raise ValueError('retained recovery proof differs')
+        else:
+            recovery=attempt_record(root/('attempt-'+recovery_id+'.json'),owner['binding_sha256'])
         valid_recovery=(recovery['state']=='skipped' and recovery.get('exclusion_reason') in EXCLUSIONS) if excluded else recovery['state']=='complete'
         if (old['state'] not in ('failed','started') or not valid_recovery or
                 not old['source_ref'] or old['source_ref']!=recovery['source_ref'] or old['event']!=recovery['event'] or
                 old['binding_sha256']!=recovery['binding_sha256'] or recovery['started_ns']<=old['started_ns'] or
                 (old['state']=='started' and recovery['started_ns']<=old['deadline_ns'])):
             raise ValueError('confirmed matching source recovery required')
+        if proof_path is not None:
+            old['recovery_proof']=recovery
+            old['recovery_previous']={field:old[field] for field in ('state','reason','updated_ns')}
         if old['state']=='started':old['reason']='hook_uncertain'
         old.update(state='resolved',updated_ns=time.time_ns(),recovery_attempt_id=recovery_id,resolution_kind=kind)
         if excluded:old['exclusion_reason']=recovery['exclusion_reason']
@@ -279,6 +344,7 @@ def main():
     p.add_argument('--child',action='store_true');p.add_argument('--binding');p.add_argument('--handler-source');p.add_argument('--child-receipt')
     p.add_argument('--state-dir');p.add_argument('--binding-sha256');p.add_argument('--timeout-seconds',type=float,default=1.5)
     p.add_argument('--project',action='store_true');p.add_argument('--resolve-attempt');p.add_argument('--exclude-attempt');p.add_argument('--recovery-attempt')
+    p.add_argument('--recover-attempt',help='Explicitly capture the same source for an expired identified attempt')
     p.add_argument('--initialize',action='store_true');p.add_argument('--dismiss-unknown-attempt');p.add_argument('--reason')
     args=p.parse_args()
     try:
@@ -298,6 +364,6 @@ def main():
         return invoke(args)
     except Exception:
         print(json.dumps({'systemMessage':'HMK capture supervision unavailable; source preservation is unconfirmed.'}))
-        return 1 if args.dismiss_unknown_attempt or args.child or args.initialize or args.project or args.resolve_attempt or args.exclude_attempt or args.recovery_attempt else 0
+        return 1 if args.recover_attempt or args.dismiss_unknown_attempt or args.child or args.initialize or args.project or args.resolve_attempt or args.exclude_attempt or args.recovery_attempt else 0
 
 if __name__=='__main__':raise SystemExit(main())

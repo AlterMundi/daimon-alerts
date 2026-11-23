@@ -171,6 +171,17 @@ confirmed matching recovery via `--resolve-attempt ID --recovery-attempt ID
 successful capture. This records resolution without invoking processing. It
 does not authorize paid retries, source-scope changes or native goal resumption.
 
+If the ledger is full, use `--recover-attempt ID` with the same supervisor
+arguments and original selected hook metadata on standard input. This is a
+foreground operator command. It verifies the same binding, session and event,
+uses the existing capture handler, and allocates one private recovery intent
+attached to the existing expired identified gap. The ordinary 128-slot limit
+and retention stay in force. A completed capture is committed before resolving
+the original incident, preserving both receipts; rerunning after that point
+reuses the evidence without calling the handler. A failed or uncertain recovery
+intent requires inspection. Verify the original incident becomes resolved at a
+higher accepted revision and check the source bytes through the receiving inbox.
+
 A verified scope exclusion is different from recovered source bytes. Reinvoke
 the selected capture handler under the unchanged binding; a matching later
 `skipped` attempt must retain a closed exclusion reason. Then use
