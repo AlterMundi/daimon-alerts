@@ -98,7 +98,7 @@ class Probes(unittest.TestCase):
                (timer,job,trigger.replace('After=packages.service network.service','After=network.service'),'unit_inactive'),
                (timer.replace('Triggers=daily.service','Triggers=other.service'),job,trigger,'unit_inactive'),
                (timer,job,trigger.replace('LoadState=loaded','LoadState=not-found'),'unit_inactive'),
-               (timer,job.replace('Result=success','Result=exit-code').replace('Status=0','Status=1'),trigger,'health_unavailable'),
+               (timer,job.replace('Result=success','Result=exit-code').replace('Status=0','Status=1'),trigger,'scheduled_check_failed'),
                (timer,job.replace('9000000000','1000000000'),trigger,'health_unavailable'),
                (timer,job,trigger.replace('Wants=','Requires='),'healthy')]
         for t,j,s,expected in cases:
@@ -115,7 +115,7 @@ class Probes(unittest.TestCase):
         cases = [(timer, job, 'healthy'),
                  (timer.replace('enabled','disabled'), job, 'unit_inactive'),
                  (timer.replace('active','inactive'), job, 'unit_inactive'),
-                 (timer, job.replace('success','exit-code').replace('Status=0','Status=1'), 'health_unavailable'),
+                 (timer, job.replace('success','exit-code').replace('Status=0','Status=1'), 'scheduled_check_failed'),
                  (timer, job.replace('9000000000','1000000000'), 'health_unavailable'),
                  (timer, job.replace('9000000000','0'), 'health_unavailable'),
                  (timer, job.replace('9000000000','11000000000'), 'health_unavailable'),
@@ -136,7 +136,7 @@ class Probes(unittest.TestCase):
         cases = [(job, 'healthy'),
                  (job.replace('5000000000', '1000000'), 'health_unavailable'),
                  (job.replace('success', 'exit-code').replace('Status=0', 'Status=2'),
-                  'health_unavailable'),
+                  'scheduled_check_failed'),
                  ('LoadState=loaded\nActiveState=activating\n'
                   'ExecMainStartTimestampMonotonic=94000000000\n', 'health_unavailable')]
         for actual, expected in cases:

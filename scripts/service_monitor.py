@@ -94,6 +94,9 @@ def scheduled_job(target):
             return ('healthy' if start > 0 and 0 <= uptime-start <= target['max_run_seconds']
                     else 'health_unavailable')
         end = int(job.get('ExecMainExitTimestampMonotonic', '0')) / 1e6
+        if (end > 0 and 0 <= uptime-end <= target['max_age_seconds']
+                and job.get('Result') == 'exit-code' and int(job.get('ExecMainStatus', '0')) != 0):
+            return 'scheduled_check_failed'
         return ('healthy' if job.get('ActiveState') == 'inactive'
                 and job.get('Result') == 'success' and job.get('ExecMainStatus') == '0'
                 and end > 0 and 0 <= uptime-end <= target['max_age_seconds']
@@ -285,6 +288,7 @@ def probe(target):
 
 
 REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observation_unreadable', 'daemon_unavailable',
+           'scheduled_check_failed',
            'provider_login_required', 'provider_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
            'matrix_reader_unavailable', 'matrix_local_capability_expiring', 'matrix_listener_unavailable',
