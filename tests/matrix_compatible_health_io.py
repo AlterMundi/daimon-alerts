@@ -66,9 +66,9 @@ class UnavailableRosterTests(unittest.TestCase):
         for retryable in (False,True):
             self.assertFalse(m.ready(self.unavailable(retryable),self.server,self.required,10))
 
-    def test_retryable_status_uses_same_read_request_at_most_twice(self):
+    def test_retryable_status_recovers_or_exhausts_finite_backoff(self):
         for next_status in (self.status,self.unavailable()):
-            replies=[self.unavailable(),next_status]
+            replies=[self.unavailable()]*4+[next_status]
             calls=[]
             request={'method':'runtime.status','params':{'view':'receiving'}}
             class Client:
@@ -78,8 +78,8 @@ class UnavailableRosterTests(unittest.TestCase):
                     return dict(ok=True,result=replies[len(calls)-1],server=self.server)
             diagnostic={}
             response,count=m.read_status(Client(),request,{'pid':12},diagnostic)
-            self.assertEqual(count,2)
-            self.assertEqual(len(calls),2)
+            self.assertEqual(count,5)
+            self.assertEqual(len(calls),5)
             self.assertEqual(m.ready(response['result'],self.server,self.required,10),next_status==self.status)
 
     def test_permanent_refusal_and_bad_auth_or_process_never_retry(self):

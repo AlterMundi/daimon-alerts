@@ -501,3 +501,9 @@ incidents. A successful start response, a claimed start with unknown outcome,
 and no matching repair record remain distinct. Historical incidents without
 an opening observation explicitly say it was not retained. An observation or
 start acknowledgment does not attribute the underlying fault or causal repair.
+
+The authenticated receiving probe spaces reads after typed, retryable roster
+contention with finite backoff (100, 300, 700, 1200 ms). All reads still share
+the original eight-second absolute client deadline and process binding.
+Persistent contention, invalid roster, bad authentication and a changed
+process still fail readiness. No service start is attempted for this result.

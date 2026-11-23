@@ -133,7 +133,7 @@ def retain_failure(config, diagnostic, error):
             value['roster_error'] = diagnostic['roster_error']
             if type(diagnostic.get('retryable')) is bool:
                 value['retryable'] = diagnostic['retryable']
-            if diagnostic.get('status_reads') in (1, 2):
+            if diagnostic.get('status_reads') in range(1, 6):
                 value['status_reads'] = diagnostic['status_reads']
             if type(diagnostic.get('recovered_within_read')) is bool:
                 value['recovered_within_read'] = diagnostic['recovered_within_read']
@@ -153,7 +153,8 @@ def retain_failure(config, diagnostic, error):
 
 
 def read_status(client, request, process, diagnostic):
-    for attempt in range(2):
+    backoff = (0.1, 0.3, 0.7, 1.2)
+    for attempt in range(len(backoff) + 1):
         diagnostic['stage'] = 'status_send'
         response = client.send(request)
         diagnostic['stage'] = 'response_authentication'
@@ -170,11 +171,12 @@ def read_status(client, request, process, diagnostic):
         diagnostic.update(stage='reader_check', roster_error=unavailable['error'],
             retryable=unavailable['retryable'], status_reads=attempt+1,
             recovered_within_read=False)
-        if (attempt == 0 and unavailable['error'] == 'reader_roster_unavailable'
+        if (attempt < len(backoff) and unavailable['error'] == 'reader_roster_unavailable'
                 and unavailable['retryable'] is True):
             # The same client keeps its original absolute eight-second
             # deadline. Repeat only this authenticated read, never input,
             # a native action, service control or provider/model request.
+            time.sleep(backoff[attempt])
             continue
         break
     return response, attempt+1
