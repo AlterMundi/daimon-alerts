@@ -4,6 +4,7 @@ Persist intent before invoking the existing capture API. Never stores source,
 payloads, paths, exception text or credentials in an attempt projection.
 """
 import argparse
+from contextlib import closing
 import fcntl
 import hashlib
 import json
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import select
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -346,6 +348,59 @@ def resolve(root,attempt_id,recovery_id,*,excluded=False,proof_path=None):
         if excluded:old['exclusion_reason']=recovery['exclusion_reason']
         atomic(path,old)
 
+def archive_accepted(root, observer_config, limit):
+    """Release slots after the bound observer has accepted the exact resolution."""
+    if not 1 <= limit <= 128:
+        raise ValueError('bounded archive limit required')
+    root=directory(root)
+    config=read(Path(observer_config))
+    if Path(config['capture_state_dir']).absolute()!=root:
+        raise ValueError('observer belongs to a different capture ledger')
+    binding_hash=config['capture_binding_sha256']
+    matching_keys=('capture_state_dir','capture_binding_sha256','producer_id',
+                   'receiving_scope','resource_ref','observer_id')
+    observer_db=Path(config['state_dir']).absolute()/'projection.sqlite'
+    with closing(sqlite3.connect(observer_db.as_uri()+'?mode=ro',uri=True)) as db, open(root/'capture.lock','a+b') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        observed=json.loads(db.execute('SELECT value FROM binding').fetchone()[0])
+        if any(observed.get(key)!=config[key] for key in matching_keys):
+            raise ValueError('observer binding differs')
+        fields={p['incident_id']:p for p in safe_projection(root,binding_hash)['items']
+                if p['processing_state']=='resolved'}
+        prefix={key:config[key] for key in ('producer_id','receiving_scope','resource_ref')}
+        archive=directory(root/'accepted-resolutions')
+        archived=list(archive.glob('attempt-*.json'))
+        if len(archived)>128:
+            raise ValueError('archived capture ledger capacity exceeded')
+        cutoff=time.time_ns()-86_400_000_000_000
+        for old in archived[:]:
+            receipt=attempt_record(old,binding_hash)
+            if receipt['state'] not in ('resolved','dismissed'):
+                raise ValueError('archived capture must be terminal')
+            if receipt['updated_ns'] < cutoff:
+                old.unlink()
+                archived.remove(old)
+        moved=0
+        for ident,projection in sorted(fields.items()):
+            if moved>=limit or len(archived)+moved>=128:
+                break
+            expected=dict(schema='daimon-alerts/v1',**prefix,**projection)
+            row=db.execute('SELECT revision,content,accepted FROM projections WHERE id=?',(ident,)).fetchone()
+            if not row or not row[2] or row[0]<1 or json.loads(row[1])!=expected:
+                continue
+            source=root/('attempt-'+ident.removeprefix('capture-')+'.json')
+            target=archive/source.name
+            if target.exists():
+                raise ValueError('duplicate archived attempt')
+            os.rename(source,target)
+            for parent in (archive,root):
+                fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY)
+                try:os.fsync(fd)
+                finally:os.close(fd)
+            moved+=1
+        return dict(archived_resolutions=moved,remaining_slots=128-len(list(root.glob('attempt-*.json'))))
+
+
 def dismiss_unknown(root,attempt_id,reason):
     """Human-directed closure of an expired unidentifiable attempt, never recovery."""
     root=directory(root)
@@ -370,10 +425,16 @@ def main():
     p.add_argument('--state-dir');p.add_argument('--binding-sha256');p.add_argument('--timeout-seconds',type=float,default=1.5)
     p.add_argument('--project',action='store_true');p.add_argument('--resolve-attempt');p.add_argument('--exclude-attempt');p.add_argument('--recovery-attempt')
     p.add_argument('--recover-attempt',help='Explicitly capture the same source for an expired identified attempt')
+    p.add_argument('--archive-accepted',action='store_true')
+    p.add_argument('--observer-config')
+    p.add_argument('--archive-limit',type=int,default=8)
     p.add_argument('--initialize',action='store_true');p.add_argument('--dismiss-unknown-attempt');p.add_argument('--reason')
     args=p.parse_args()
     try:
         if args.child:child(args);return 0
+        if args.archive_accepted:
+            print(json.dumps(archive_accepted(args.state_dir,args.observer_config,args.archive_limit)))
+            return 0
         if args.dismiss_unknown_attempt:
             dismiss_unknown(args.state_dir,args.dismiss_unknown_attempt,args.reason)
             print(json.dumps(dict(human_disposition=True,source_preserved=False,processing_invoked=False)));return 0
@@ -389,6 +450,6 @@ def main():
         return invoke(args)
     except Exception:
         print(json.dumps({'systemMessage':'HMK capture supervision unavailable; source preservation is unconfirmed.'}))
-        return 1 if args.recover_attempt or args.dismiss_unknown_attempt or args.child or args.initialize or args.project or args.resolve_attempt or args.exclude_attempt or args.recovery_attempt else 0
+        return 1 if args.archive_accepted or args.recover_attempt or args.dismiss_unknown_attempt or args.child or args.initialize or args.project or args.resolve_attempt or args.exclude_attempt or args.recovery_attempt else 0
 
 if __name__=='__main__':raise SystemExit(main())

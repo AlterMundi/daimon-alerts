@@ -1,9 +1,11 @@
 """Real capture subprocesses: pre-inbox gaps, timeout, killed parent and recovery."""
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -135,6 +137,49 @@ class CaptureSupervision(unittest.TestCase):
         with Inbox(self.inbox,self.binding).connect() as con:
             self.assertEqual(con.execute('SELECT count(*) FROM forward_ranges').fetchone()[0],1)
             self.assertEqual(con.execute('SELECT count(*) FROM forward_scope_gaps').fetchone()[0],1)
+
+    def test_archive_accepts_only_exact_observed_resolutions_and_preserves_receipts(self):
+        from capture_supervisor import archive_accepted, atomic
+
+        self.assertIn('systemMessage',self.invoke())
+        failed=self.attempts()[0]
+        pending=dict(failed,attempt_id=uuid4().hex)
+        atomic(self.state/('attempt-'+pending['attempt_id']+'.json'),pending)
+        self.transcript_present()
+        self.assertEqual(self.invoke(),{})
+        recovery=next(r for r in self.attempts() if r['state']=='complete')
+        resolve(self.state,failed['attempt_id'],recovery['attempt_id'])
+        root=self.root/'observed'
+        root.mkdir()
+        config=dict(capture_state_dir=str(self.state),capture_binding_sha256=self.digest,
+                    producer_id='fictional',receiving_scope='fixture',resource_ref='fixture',
+                    observer_id='fixture',state_dir=str(root))
+        config_path=self.root/'observer.json'
+        atomic(config_path,config)
+        exact=next(r for r in safe_projection(self.state,self.digest)['items']
+                   if r['processing_state']=='resolved')
+        content=dict(schema='daimon-alerts/v1',producer_id='fictional',
+                     receiving_scope='fixture',resource_ref='fixture',**exact)
+        old=self.state/('attempt-'+failed['attempt_id']+'.json')
+        original=old.read_bytes()
+        with closing(sqlite3.connect(root/'projection.sqlite')) as db:
+            db.execute('CREATE TABLE binding(value TEXT)')
+            db.execute('INSERT INTO binding VALUES(?)',(json.dumps(config),))
+            db.execute('CREATE TABLE projections(id TEXT,revision INTEGER,content TEXT,accepted INTEGER)')
+            db.execute('INSERT INTO projections VALUES(?,2,?,0)',(exact['incident_id'],json.dumps(content)))
+            db.commit()
+            self.assertEqual(archive_accepted(self.state,config_path,1)['archived_resolutions'],0)
+            db.execute('UPDATE projections SET content=?,accepted=1',
+                       (json.dumps(dict(content,work_preserved=False)),))
+            db.commit()
+            self.assertEqual(archive_accepted(self.state,config_path,1)['archived_resolutions'],0)
+            db.execute('UPDATE projections SET content=?',(json.dumps(content),))
+            db.commit()
+        self.assertEqual(archive_accepted(self.state,config_path,1)['archived_resolutions'],1)
+        self.assertFalse(old.exists())
+        self.assertEqual((self.state/'accepted-resolutions'/old.name).read_bytes(),original)
+        self.assertEqual(archive_accepted(self.state,config_path,1)['archived_resolutions'],0)
+        self.assertEqual(safe_projection(self.state,self.digest)['items'][0]['processing_state'],'open')
 
     def test_timeout_before_any_inbox(self):
         result=self.invoke(self.sleeping_handler(),.1);self.assertIn('hook_timeout',result['systemMessage'])
