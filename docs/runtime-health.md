@@ -195,7 +195,13 @@ readers. For a Matrix `unit` target, optionally set `receiving_command` to an
 operator-owned argv (absolute executable, at most8 arguments). The existing
 service monitor first checks the unit, then runs this finite adapter with a
 12second deadline. It requires the closed `dm.monitor.matrix-receiving/v1`
-response with a Boolean `ready`; false reports `matrix_reader_unavailable`.
+response with a Boolean `ready`; a legacy false reports `matrix_reader_unavailable`.
+A current authenticated receiving check identifies the selected-contract failure
+as gate not selected, runtime binding changed, incomplete reader coverage, or
+reader authority unavailable. These bounded reasons identify the requirement
+that failed while keeping reader metadata private. Restart grace still requires
+an observed orderly lifecycle transition and the existing eligible transport
+reasons.
 Unknown, malformed or failed observations cannot resolve a retained incident.
 No new scheduler, model activation, message or automatic retransmission is added.
 

@@ -37,18 +37,23 @@ class CompatibleHealthTests(unittest.TestCase):
         self.assertFalse(m.ready(status,self.server,self.required+[('being','protected-sibling')],10))
 
     def test_actual_readiness_requirements_still_refuse(self):
-        changes = [lambda s: s['receiving']['channels']['tribe'].update(phase='revoke'),
-                   lambda s: s['receiving']['channels']['tribe'].update(process_id=13),
-                   lambda s: s['loaded_runtime'].update(local_origin={}),
-                   lambda s: s['receiving']['channels']['tribe']['readers'][0].update(wire_read=[]),
-                   lambda s: s['receiving']['channels']['tribe']['readers'][0].update(authority_epochs=[]),
-                   lambda s: s['receiving']['channels']['tribe']['readers'][0].update(validity={'mode':'finite','not_before_ms':0,'not_after_ms':5}),
-                   lambda s: s['receiving']['rosters']['tribe'].update(audience=[])]
-        for change in changes:
-            with self.subTest(change=change):
-                status=copy.deepcopy(self.status);change(status)
-                self.assertFalse(m.ready(status, self.server, self.required, 10))
-        self.assertFalse(m.ready(self.status,self.server,self.required+[('missing','body2')],10))
+        changes = [
+            ('matrix_gate_not_selected', lambda s: s['receiving']['channels']['tribe'].update(phase='revoke')),
+            ('matrix_runtime_binding_changed', lambda s: s['receiving']['channels']['tribe'].update(process_id=13)),
+            ('matrix_runtime_binding_changed', lambda s: s['loaded_runtime'].update(local_origin={})),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['channels']['tribe']['readers'][0].update(wire_read=[])),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['channels']['tribe']['readers'][0].update(authority_epochs=[])),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['channels']['tribe']['readers'][0].update(
+                validity={'mode':'finite','not_before_ms':0,'not_after_ms':5})),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['rosters']['tribe'].update(audience=[])),
+        ]
+        for reason, change in changes:
+            with self.subTest(reason=reason):
+                status=copy.deepcopy(self.status)
+                change(status)
+                self.assertEqual(m.readiness_problem(status, self.server, self.required, 10), reason)
+        self.assertEqual(m.readiness_problem(self.status, self.server,
+            self.required+[('missing','body2')],10), 'matrix_reader_coverage_incomplete')
 
 
 
