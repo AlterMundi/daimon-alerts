@@ -238,6 +238,10 @@ service restart is not a substitute for that selection after software changes.
 
 ## Scheduled maintenance health
 
+A recent recorded nonzero exit is reported as a failed scheduled check. Inspect
+that job’s retained report for the failed stage before diagnosing the host or its
+applications. A stale or absent receipt remains an unavailable observation.
+
 A `scheduled_job` target observes an explicitly selected system/user service and
 its matching enabled timer. Configure `unit`, `timer`, `scope`,
 `max_age_seconds` (60–172800) and `max_run_seconds` (10–3600). The two-day
