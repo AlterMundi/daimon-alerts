@@ -69,19 +69,20 @@ def roster_unavailable(status):
         return roster
     return None
 
-def ready(status, server, required, now_ms):
+def readiness_problem(status, server, required, now_ms):
     from daimon_matrix.identity import validity_contains, validate_validity
     loaded = status['loaded_runtime']
     gate = status['receiving']['channels']['tribe']
     roster = status['receiving']['rosters']['tribe']
-    if (gate.get('controlled') is not True or gate.get('phase') != 'select'
-            or loaded['local_origin'] != server or gate['process_id'] != loaded['process_id']):
-        return False
+    if gate.get('controlled') is not True or gate.get('phase') != 'select':
+        return 'matrix_gate_not_selected'
+    if loaded['local_origin'] != server or gate['process_id'] != loaded['process_id']:
+        return 'matrix_runtime_binding_changed'
     if roster_unavailable(status) is not None:
-        return False
+        return 'matrix_roster_unavailable'
     readers = gate['readers']
     if not reader_coverage(readers, required, roster['audience']):
-        return False
+        return 'matrix_reader_coverage_incomplete'
     audience = {(r['being_ref'], r['embodiment_id'], r['credential_id']) for r in roster['audience']}
     epochs = set(roster['required_authority_epochs'])
     for reader in readers:
@@ -90,12 +91,16 @@ def ready(status, server, required, now_ms):
                 or not epochs <= set(reader['authority_epochs'])
                 or not {'dm.tribe.conversation/v1', 'dm.tribe.direct-conversation/v1'} <= set(reader['wire_read'])
                 or (reader['being_ref'], reader['embodiment_id'], reader['credential_id']) not in audience):
-            return False
+            return 'matrix_reader_authority_unavailable'
     own = [r for r in readers if r['embodiment_id'] == server['embodiment_id']]
     # The native gate binds this live process and authenticated reader contract.
     # Preserve the installed compatible-startup recovery: software/view hashes
     # describe the retained selection, not necessarily today's package bytes.
-    return len(own) == 1
+    return None if len(own) == 1 else 'matrix_reader_coverage_incomplete'
+
+
+def ready(status, server, required, now_ms):
+    return readiness_problem(status, server, required, now_ms) is None
 
 
 def retain_failure(config, diagnostic, error):
@@ -133,7 +138,7 @@ def retain_failure(config, diagnostic, error):
             value['roster_error'] = diagnostic['roster_error']
             if type(diagnostic.get('retryable')) is bool:
                 value['retryable'] = diagnostic['retryable']
-            if diagnostic.get('status_reads') in (1, 2):
+            if diagnostic.get('status_reads') in range(1, 6):
                 value['status_reads'] = diagnostic['status_reads']
             if type(diagnostic.get('recovered_within_read')) is bool:
                 value['recovered_within_read'] = diagnostic['recovered_within_read']
@@ -153,7 +158,8 @@ def retain_failure(config, diagnostic, error):
 
 
 def read_status(client, request, process, diagnostic):
-    for attempt in range(2):
+    backoff = (0.1, 0.3, 0.7, 1.2)
+    for attempt in range(len(backoff) + 1):
         diagnostic['stage'] = 'status_send'
         response = client.send(request)
         diagnostic['stage'] = 'response_authentication'
@@ -170,14 +176,45 @@ def read_status(client, request, process, diagnostic):
         diagnostic.update(stage='reader_check', roster_error=unavailable['error'],
             retryable=unavailable['retryable'], status_reads=attempt+1,
             recovered_within_read=False)
-        if (attempt == 0 and unavailable['error'] == 'reader_roster_unavailable'
+        if (attempt < len(backoff) and unavailable['error'] == 'reader_roster_unavailable'
                 and unavailable['retryable'] is True):
             # The same client keeps its original absolute eight-second
             # deadline. Repeat only this authenticated read, never input,
             # a native action, service control or provider/model request.
+            time.sleep(backoff[attempt])
             continue
         break
     return response, attempt+1
+
+
+def acquire_probe_lock(lock):
+    # An overlapping operator read is not evidence that Matrix is down.
+    deadline = time.monotonic() + 1.5
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LocalHealthFailure('matrix_probe_contended') from None
+            time.sleep(min(0.05, remaining))
+
+
+def observe_peer(address, observer):
+    # Establish the actual peer before selecting the retained read token.
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(2)
+        try:
+            connection.connect(address)
+        except FileNotFoundError:
+            raise LocalHealthFailure('matrix_status_socket_missing') from None
+        except ConnectionRefusedError:
+            raise LocalHealthFailure('matrix_status_socket_refused') from None
+        except TimeoutError:
+            raise LocalHealthFailure('matrix_status_socket_timeout') from None
+        with observer(connection):
+            return observer.process
 
 
 def inspect(config, diagnostic=None):
@@ -201,14 +238,9 @@ def inspect(config, diagnostic=None):
     if state.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError('private probe state required')
     with (state / 'lock').open('a+b') as lock, ConnectedProcessObserver() as observer:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        acquire_probe_lock(lock)
         diagnostic['stage'] = 'peer_connect'
-        # Establish the actual peer before selecting the retained read token.
-        with socket.socket(socket.AF_UNIX) as connection:
-            connection.settimeout(2)
-            connection.connect(config['socket'])
-            with observer(connection):
-                process = observer.process
+        process = observe_peer(config['socket'], observer)
         client = LocalClient(Path(config['socket']), cfg, connection_observer=observer,
                              timeout_seconds=8, deadline_ns=time.monotonic_ns()+8_000_000_000)
         binding = dict(process=process, server=dict(cfg.expected_server),
@@ -236,11 +268,15 @@ def inspect(config, diagnostic=None):
         diagnostic['stage'] = 'process_verify'
         observer.verify()
         diagnostic['stage'] = 'reader_check'
-        result = ready(response['result'], response['server'], config['required_readers'], time.time_ns()//1_000_000)
+        problem = readiness_problem(response['result'], response['server'],
+                                    config['required_readers'], time.time_ns()//1_000_000)
+        result = problem is None
         if 'roster_error' in diagnostic:
             diagnostic['status_reads'] = status_reads
             diagnostic['recovered_within_read'] = result
             retain_failure(config, diagnostic, ValueError())
+        if problem and roster_unavailable(response['result']) is None:
+            raise LocalHealthFailure(problem)
         return result
 
 
@@ -260,7 +296,17 @@ def main():
         # No daemon exception, private path, credential or source text escapes.
         retain_failure(config, diagnostic, error)
         return 1
-    print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v1', ready=result)))
+    if not result and diagnostic.get('roster_error'):
+        state = {
+            'reader_roster_invalid': 'matrix_roster_invalid',
+            'reader_roster_unavailable': (
+                'matrix_roster_contended' if diagnostic.get('retryable')
+                else 'matrix_roster_unavailable'
+            ),
+        }[diagnostic['roster_error']]
+        print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v2', state=state)))
+    else:
+        print(json.dumps(dict(schema='dm.monitor.matrix-receiving/v1', ready=result)))
     return 0
 
 

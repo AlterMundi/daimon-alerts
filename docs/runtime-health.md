@@ -195,7 +195,13 @@ readers. For a Matrix `unit` target, optionally set `receiving_command` to an
 operator-owned argv (absolute executable, at most8 arguments). The existing
 service monitor first checks the unit, then runs this finite adapter with a
 12second deadline. It requires the closed `dm.monitor.matrix-receiving/v1`
-response with a Boolean `ready`; false reports `matrix_reader_unavailable`.
+response with a Boolean `ready`; a legacy false reports `matrix_reader_unavailable`.
+A current authenticated receiving check identifies the selected-contract failure
+as gate not selected, runtime binding changed, incomplete reader coverage, or
+reader authority unavailable. These bounded reasons identify the requirement
+that failed while keeping reader metadata private. Restart grace still requires
+an observed orderly lifecycle transition and the existing eligible transport
+reasons.
 Unknown, malformed or failed observations cannot resolve a retained incident.
 No new scheduler, model activation, message or automatic retransmission is added.
 
@@ -340,6 +346,13 @@ incident, never an acknowledgment or invented recovery. At most32 entries/64KiB
 are projected, open incidents first; `more_incidents` explicitly signals omitted
 entries. Use the existing authenticated paginated incident API for the remainder.
 Neither truncation nor an unavailable observer establishes health.
+
+A Matrix-only review task selects `/matrix_review` and `/service_state`.
+The bounded Matrix index contains current incident identities, revisions, states
+and acceptance for the configured authenticated readers. Unrelated service
+revisions and report reordering do not change this index. It retains Matrix
+change evidence independently of truncation in the general list. Read the
+matching full incident before any action.
 
 An explicitly selected existing heartbeat report source can compare `/incidents`,
 `/service_state` and `/more_incidents`, excluding the changing `/checked_at` clock
@@ -501,3 +514,36 @@ incidents. A successful start response, a claimed start with unknown outcome,
 and no matching repair record remain distinct. Historical incidents without
 an opening observation explicitly say it was not retained. An observation or
 start acknowledgment does not attribute the underlying fault or causal repair.
+
+The authenticated receiving probe spaces reads after typed, retryable roster
+contention with finite backoff (100, 300, 700, 1200 ms). All reads still share
+the original eight-second absolute client deadline and process binding.
+Persistent contention, invalid roster, bad authentication and a changed
+process still fail readiness. No service start is attempted for this result.
+
+If an operator check overlaps a scheduled check, the probe waits up to 1.5
+seconds for the shared status request lock. Persistent probe contention is
+reported as probe contention, without claiming the Matrix reader failed.
+An authenticated roster observation distinguishes transient database contention,
+an unavailable roster and an invalid roster. The monitor retains those typed
+opening observations alongside each incident's verified resolution and any
+matching repair receipt.
+
+During a Matrix update, the unit can be active before the Unix status socket
+exists. The reader distinguishes an absent socket, a refused connection and a
+connection timeout. These are observations about the configured socket; only
+the lifecycle record establishes whether a deployment was in progress. Keep
+monitoring during updates and require a successful authenticated read for
+recovery.
+
+
+For an authenticated Matrix unit that recently left its active state cleanly,
+the observer reports recovery pending for missing/refused startup sockets and
+unit transitions for up to 75 seconds from the systemd active exit timestamp.
+The clock starts at the exit, regardless of when the observer next runs.
+A failure result, systemd automatic restarts, an invalid reader response, or a
+missing lifecycle observation gets ordinary alert handling. This is evidence of
+an orderly transition, not attribution to an operator or a specific deployment.
+An outage already open remains open, and a fresh authenticated read is still
+required to close it. The observer uses its existing schedule and continues
+probing throughout the window.

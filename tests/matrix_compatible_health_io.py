@@ -37,18 +37,23 @@ class CompatibleHealthTests(unittest.TestCase):
         self.assertFalse(m.ready(status,self.server,self.required+[('being','protected-sibling')],10))
 
     def test_actual_readiness_requirements_still_refuse(self):
-        changes = [lambda s: s['receiving']['channels']['tribe'].update(phase='revoke'),
-                   lambda s: s['receiving']['channels']['tribe'].update(process_id=13),
-                   lambda s: s['loaded_runtime'].update(local_origin={}),
-                   lambda s: s['receiving']['channels']['tribe']['readers'][0].update(wire_read=[]),
-                   lambda s: s['receiving']['channels']['tribe']['readers'][0].update(authority_epochs=[]),
-                   lambda s: s['receiving']['channels']['tribe']['readers'][0].update(validity={'mode':'finite','not_before_ms':0,'not_after_ms':5}),
-                   lambda s: s['receiving']['rosters']['tribe'].update(audience=[])]
-        for change in changes:
-            with self.subTest(change=change):
-                status=copy.deepcopy(self.status);change(status)
-                self.assertFalse(m.ready(status, self.server, self.required, 10))
-        self.assertFalse(m.ready(self.status,self.server,self.required+[('missing','body2')],10))
+        changes = [
+            ('matrix_gate_not_selected', lambda s: s['receiving']['channels']['tribe'].update(phase='revoke')),
+            ('matrix_runtime_binding_changed', lambda s: s['receiving']['channels']['tribe'].update(process_id=13)),
+            ('matrix_runtime_binding_changed', lambda s: s['loaded_runtime'].update(local_origin={})),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['channels']['tribe']['readers'][0].update(wire_read=[])),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['channels']['tribe']['readers'][0].update(authority_epochs=[])),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['channels']['tribe']['readers'][0].update(
+                validity={'mode':'finite','not_before_ms':0,'not_after_ms':5})),
+            ('matrix_reader_authority_unavailable', lambda s: s['receiving']['rosters']['tribe'].update(audience=[])),
+        ]
+        for reason, change in changes:
+            with self.subTest(reason=reason):
+                status=copy.deepcopy(self.status)
+                change(status)
+                self.assertEqual(m.readiness_problem(status, self.server, self.required, 10), reason)
+        self.assertEqual(m.readiness_problem(self.status, self.server,
+            self.required+[('missing','body2')],10), 'matrix_reader_coverage_incomplete')
 
 
 
@@ -66,9 +71,9 @@ class UnavailableRosterTests(unittest.TestCase):
         for retryable in (False,True):
             self.assertFalse(m.ready(self.unavailable(retryable),self.server,self.required,10))
 
-    def test_retryable_status_uses_same_read_request_at_most_twice(self):
+    def test_retryable_status_recovers_or_exhausts_finite_backoff(self):
         for next_status in (self.status,self.unavailable()):
-            replies=[self.unavailable(),next_status]
+            replies=[self.unavailable()]*4+[next_status]
             calls=[]
             request={'method':'runtime.status','params':{'view':'receiving'}}
             class Client:
@@ -78,8 +83,8 @@ class UnavailableRosterTests(unittest.TestCase):
                     return dict(ok=True,result=replies[len(calls)-1],server=self.server)
             diagnostic={}
             response,count=m.read_status(Client(),request,{'pid':12},diagnostic)
-            self.assertEqual(count,2)
-            self.assertEqual(len(calls),2)
+            self.assertEqual(count,5)
+            self.assertEqual(len(calls),5)
             self.assertEqual(m.ready(response['result'],self.server,self.required,10),next_status==self.status)
 
     def test_permanent_refusal_and_bad_auth_or_process_never_retry(self):

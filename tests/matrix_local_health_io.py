@@ -97,6 +97,42 @@ class SafeFailureTests(unittest.TestCase):
             m.retain_failure({'state':tmp},{'stage':'status_send'},ValueError('private payload'))
             self.assertFalse((root/'probe-failure.json').exists())
 
+    def test_missing_socket_and_socket_without_listener_are_distinct(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            address = str(Path(tmp) / 'reader.sock')
+            with self.assertRaisesRegex(m.LocalHealthFailure, 'matrix_status_socket_missing'):
+                m.observe_peer(address, None)
+            with socket.socket(socket.AF_UNIX) as endpoint:
+                endpoint.bind(address)
+                with self.assertRaisesRegex(m.LocalHealthFailure, 'matrix_status_socket_refused'):
+                    m.observe_peer(address, None)
+
+    def test_probe_lock_waits_briefly_when_another_read_is_active(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'lock'
+            with path.open('ab') as first, path.open('ab') as second:
+                m.fcntl.flock(first, m.fcntl.LOCK_EX)
+                def release(_delay):
+                    m.fcntl.flock(first, m.fcntl.LOCK_UN)
+                with patch.object(m.time, 'sleep', side_effect=release) as wait:
+                    m.acquire_probe_lock(second)
+                wait.assert_called_once()
+
+    def test_main_exposes_only_typed_roster_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / 'config.json'
+            config.write_text('{}')
+            def contended(_config, diagnostic):
+                diagnostic.update(roster_error='reader_roster_unavailable', retryable=True)
+                return False
+            out = io.StringIO()
+            with patch.object(m, 'inspect', contended), patch.object(m.sys, 'argv',
+                    ['probe', '--config', str(config)]), contextlib.redirect_stdout(out):
+                self.assertEqual(m.main(), 0)
+            self.assertEqual(json.loads(out.getvalue()), {
+                'schema': 'dm.monitor.matrix-receiving/v2', 'state': 'matrix_roster_contended'
+            })
+
     def test_main_keeps_existing_failure_exit_without_printing_private_exception(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
