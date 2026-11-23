@@ -104,6 +104,38 @@ class CaptureSupervision(unittest.TestCase):
             revision=con.execute('select revision from heads where source=?',('fictional-session',)).fetchone()[0]
         self.assertEqual(inbox.restore(revision),original_bytes)
 
+    def test_forward_scope_gap_stays_open_once_as_new_turns_are_captured(self):
+        sys.path.insert(0,str(HMK/'scripts'))
+        from capture_inbox import Inbox
+        from forward_capture import activate
+
+        self.transcript_present()
+        activate(self.binding,self.root/'before-forward.sqlite')
+        def emit(group):
+            with self.transcript.open('ab') as source:
+                for kind,payload in group:
+                    source.write((json.dumps(dict(type=kind,payload=payload))+'\n').encode())
+        emit([('event_msg',dict(type='task_started',turn_id='unverified')),
+              ('event_msg',dict(type='task_complete',turn_id='unverified'))])
+        first=self.invoke()
+        self.assertIn('session_scope_unverified',first['systemMessage'])
+        projection=safe_projection(self.state,self.digest)['items']
+        self.assertEqual(len(projection),1)
+        self.assertFalse(projection[0]['work_preserved'])
+        emit([('event_msg',dict(type='task_started',turn_id='known')),
+              ('turn_context',dict(turn_id='known',cwd=str(self.root))),
+              ('response_item',dict(type='message',role='user',content=[]))])
+        self.payload['hook_event_name']='SessionEnd'
+        self.assertEqual(self.invoke(),first)
+        self.assertEqual(safe_projection(self.state,self.digest)['items'],projection)
+        linked=next(a for a in self.attempts() if a['state']=='skipped')
+        self.assertEqual(linked['scope_gap_attempt_id'],
+                         next(a for a in self.attempts() if a['state']=='failed')['attempt_id'])
+        self.assertNotIn('exclusion_reason',linked)
+        with Inbox(self.inbox,self.binding).connect() as con:
+            self.assertEqual(con.execute('SELECT count(*) FROM forward_ranges').fetchone()[0],1)
+            self.assertEqual(con.execute('SELECT count(*) FROM forward_scope_gaps').fetchone()[0],1)
+
     def test_timeout_before_any_inbox(self):
         result=self.invoke(self.sleeping_handler(),.1);self.assertIn('hook_timeout',result['systemMessage'])
         self.assertFalse(self.inbox.exists());self.assertEqual(safe_projection(self.state,self.digest)['items'][0]['problem_code'],'timeout')

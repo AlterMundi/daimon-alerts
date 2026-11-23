@@ -88,6 +88,12 @@ jobs:
         env:
           ALERTS_TEST_HMK_SOURCE: .hmk-runtime
       - if: steps.scope.outputs.runtime_only != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: AlterMundi/daimon-memory-kit
+          ref: a2d733e505858d07a7de5435012d22d3f8eccd91
+          path: .dmk-capture
+      - if: steps.scope.outputs.runtime_only != 'true'
         run: python tests/capture_supervision_io.py
         env:
-          ALERTS_TEST_HMK_SOURCE: .hmk-runtime
+          ALERTS_TEST_HMK_SOURCE: .dmk-capture

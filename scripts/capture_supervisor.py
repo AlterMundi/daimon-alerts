@@ -164,6 +164,11 @@ def child(args):
     receipt=capture(binding,payload)
     safe=dict(capture_complete=receipt['capture_complete'],skipped=bool(receipt.get('skipped')),
               reason=receipt.get('error') if receipt.get('error') in REASONS else 'capture_deferred')
+    if (not safe['capture_complete'] and not safe['skipped']
+            and safe['reason']=='session_scope_unverified'
+            and receipt.get('scope')=='dmk.forward-capture/v1'
+            and type(receipt.get('remaining_bytes')) is int and receipt['remaining_bytes']==0):
+        safe['retained_scope_gap']=True
     if safe['skipped'] and receipt.get('reason') in EXCLUSIONS:
         safe['exclusion_reason']=receipt['reason']
     atomic(Path(args.child_receipt),safe)
@@ -249,9 +254,29 @@ def invoke(args):
             attempt['updated_ns']=time.time_ns()
             atomic(path,attempt)
             return finish_recovery(root,args.recover_attempt,path,attempt)
+        if not args.recover_attempt and receipt.get('retained_scope_gap') is True and source_ref:
+            return finish_scope_gap(path,attempt,output)
         return finish(path,attempt,output)
     finally:
         receipt_path.unlink(missing_ok=True)
+
+def finish_scope_gap(path,attempt,output):
+    # The inbox durably retains the unresolved ranges. Keep one open producer
+    # incident for this source, without treating the linked observation as
+    # verified capture or an exclusion.
+    with open(path.parent/'capture.lock','a+b') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        for candidate in sorted(path.parent.glob('attempt-*.json')):
+            previous=attempt_record(candidate,attempt['binding_sha256'])
+            if (previous['state']=='failed' and previous['reason']=='session_scope_unverified'
+                    and previous.get('retained_scope_gap') is True
+                    and previous['source_ref']==attempt['source_ref']):
+                attempt.update(state='skipped',scope_gap_attempt_id=previous['attempt_id'])
+                break
+        else:
+            attempt['retained_scope_gap']=True
+        return finish(path,attempt,output)
+
 
 def finish(path,attempt,output=None):
     attempt['updated_ns']=time.time_ns();atomic(path,attempt)
