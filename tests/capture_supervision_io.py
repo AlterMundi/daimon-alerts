@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from uuid import uuid4
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
@@ -62,6 +63,47 @@ class CaptureSupervision(unittest.TestCase):
         telemetry=''.join(p.read_text() for p in self.state.glob('*.json'))
         self.assertNotIn('PRIVATE_',telemetry);self.assertNotIn(str(self.transcript),telemetry)
         self.assertNotIn('PRIVATE_',json.dumps(resolved))
+    def test_exact_recovery_at_capacity_preserves_other_attempts(self):
+        from capture_supervisor import atomic
+
+        self.assertIn('systemMessage',self.invoke())
+        original=self.attempts()[0]
+        target=original['attempt_id']
+        for _ in range(127):
+            sibling=dict(original,attempt_id=uuid4().hex)
+            atomic(self.state/('attempt-'+sibling['attempt_id']+'.json'),sibling)
+        self.transcript_present()
+        self.assertIn('systemMessage',self.invoke())
+        self.assertFalse(self.inbox.exists())
+        command=self.command()+['--recover-attempt',target]
+        wrong=dict(self.payload,session_id='different-session')
+        refused=subprocess.run(command,input=json.dumps(wrong),capture_output=True,text=True)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertFalse(list(self.state.glob('.recovery-*.json')))
+        receipt=subprocess.run(command,input=json.dumps(self.payload),capture_output=True,text=True,check=True)
+        self.assertEqual(json.loads(receipt.stdout),{
+            'capture_gap_resolved':True,'source_preserved':True,'processing_invoked':False})
+        selected=next(a for a in self.attempts() if a['attempt_id']==target)
+        self.assertEqual(selected['state'],'resolved')
+        self.assertEqual(selected['recovery_previous']['state'],'failed')
+        self.assertEqual(selected['recovery_proof']['source_ref'],original['source_ref'])
+        projections=safe_projection(self.state,self.digest)['items']
+        self.assertEqual(len(projections),128)
+        self.assertEqual(sum(p['processing_state']=='open' for p in projections),127)
+        self.assertEqual(sum(p['work_preserved'] for p in projections),1)
+        self.assertFalse(list(self.state.glob('.recovery-*.json')))
+        original_bytes=self.transcript.read_bytes()
+        self.transcript.unlink()
+        repeat=subprocess.run(command,input=json.dumps(self.payload),capture_output=True,text=True,check=True)
+        self.assertEqual(repeat.stdout,receipt.stdout)
+        self.assertEqual(next(a for a in self.attempts() if a['attempt_id']==target),selected)
+        sys.path.insert(0,str(HMK/'scripts'))
+        from capture_inbox import Inbox
+        inbox=Inbox(self.inbox,self.binding)
+        with inbox.connect() as con:
+            revision=con.execute('select revision from heads where source=?',('fictional-session',)).fetchone()[0]
+        self.assertEqual(inbox.restore(revision),original_bytes)
+
     def test_timeout_before_any_inbox(self):
         result=self.invoke(self.sleeping_handler(),.1);self.assertIn('hook_timeout',result['systemMessage'])
         self.assertFalse(self.inbox.exists());self.assertEqual(safe_projection(self.state,self.digest)['items'][0]['problem_code'],'timeout')
