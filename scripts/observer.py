@@ -55,6 +55,13 @@ class ReadOnlyInbox:
 class Observer:
     def __init__(self,config):
         self.config=config; self.client=Client(config['base_url'],config['token_file'])
+        self.embedding_probe=config.get('embedding_probe')
+        if self.embedding_probe is not None:
+            args=self.embedding_probe
+            if (not isinstance(args,list) or not 1<=len(args)<=12
+                    or any(not isinstance(arg,str) or not arg or len(arg)>4096 for arg in args)
+                    or not Path(args[0]).is_absolute()):
+                raise ValueError('explicit bounded DMK embedding probe required')
         self.state=Path(config['state_dir']); self.state.mkdir(mode=0o700,parents=True,exist_ok=True)
         if self.state.is_symlink() or self.state.stat().st_mode&0o077: raise ValueError('private observer state required')
         self.lock=open(self.state/'observer.lock','a+b')
@@ -276,6 +283,40 @@ class Observer:
         audit.update(state='complete',receipt=result);atomic(audit_path,audit)
         return result
 
+    def embedding_incident(self):
+        # Independent of worker activity. One retained sample and issue per route.
+        path=self.state/'embedding-probe.json'
+        sample=json.loads(private_text(path)) if path.exists() else {}
+        incident=sample.get('incident')
+        if incident:
+            self.project(incident)
+        if self.embedding_probe is None:
+            return
+        now=int(time.time())
+        if 0<=now-sample.get('attempt_at',0)<300:
+            return
+        atomic(path,dict(sample,attempt_at=now))
+        try:
+            result=subprocess.run(self.embedding_probe,stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL,timeout=15)
+            healthy=result.returncode==0
+        except (OSError,subprocess.TimeoutExpired):
+            healthy=False
+        if healthy and incident and incident['processing_state']=='open':
+            incident=dict(incident,processing_state='resolved',severity='info',
+                          updated_at=now,summary='The selected memory embedding space passed its live check.')
+        elif not healthy and (not incident or incident['processing_state']=='resolved'):
+            import uuid
+            incident=dict(incident_id='embedding-'+uuid.uuid4().hex,
+                operation_id='embedding-'+hashlib.sha256(self.config['observer_id'].encode()).hexdigest(),
+                phase='index',severity='error',problem_code='service_unavailable',
+                summary='The selected memory embedding space did not pass its live check.',
+                action='Check the selected model and its index. Recover through the memory producer and verify retrieval.',
+                source_at=now,updated_at=now,processing_state='open',work_preserved=True)
+        atomic(path,dict(attempt_at=now,checked_at=now,healthy=healthy,incident=incident))
+        if incident:
+            self.project(incident)
+
     def retire(self):
         """Explicitly retire a stopped route; never change producer work."""
         path=self.state/'source-incident.json'
@@ -289,6 +330,16 @@ class Observer:
                     action='Retained producer work and delivery receipts are unchanged; no source recovery is inferred.')
                 atomic(path,value)
             self.project(value)
+        embedding_path=self.state/'embedding-probe.json'
+        if embedding_path.exists():
+            sample=json.loads(private_text(embedding_path))
+            incident=sample.get('incident')
+            if incident and incident['processing_state']=='open':
+                incident.update(processing_state='resolved',severity='info',updated_at=int(time.time()),
+                                summary='Memory embedding observation was retired by its operator.')
+                atomic(embedding_path,sample)
+            if incident:
+                self.project(incident)
         status=self.client.call('POST','/v1/observers/'+self.config['observer_id']+'/retire',
             dict(receiving_scope=self.config['receiving_scope']))
         if any(o['observer_id']==self.config['observer_id'] for o in status['observers']):raise Unavailable()
@@ -326,6 +377,7 @@ class Observer:
                     for record in safe_projection(self.config['capture_state_dir'],self.config['capture_binding_sha256'])['items']:
                         self.project(record)
                 self.client.call('PUT','/v1/observers/'+self.config['observer_id'],dict(receiving_scope=self.config['receiving_scope'],source_at=source,source_state=code))
+                self.embedding_incident()
         except (OSError,ValueError):
             code='observation_unreadable';self.observation_kind='capture_unreadable'
             try:

@@ -301,3 +301,33 @@ Use the supported compact `runtime.status(view="receiving")` for this readiness
 probe. Full retained-history projection is unrelated to current reader health and
 must not consume its eight-second deadline. The view is part of the retained
 read-only token binding; it replaces one prior read token without growing a log.
+
+
+## Live DMK embedding observation
+
+For a receiving DMK worker with an explicitly selected embedding profile, the
+existing observer accepts an optional `embedding_probe` command array. Use the
+same receiving interpreter and DMK runtime/profile as the worker. Run
+`scripts/dmk_embedding_probe.py --runtime-scripts <scripts> --profile <profile>`
+as the receiving owner. It submits synthetic text in query and passage modes
+and checks finite vectors and a matching dimension in the selected index using
+read-only SQLite. An empty eligible corpus may have no vectors. This check does
+not certify full historical index coverage. Rebind and reverify the command
+when the worker's runtime or profile path changes.
+
+The observer samples at most once per five minutes with a 15-second command
+deadline. It retains one private sample and uses the existing durable incident
+publisher. Repeated failures keep the same incident. A passing live probe moves
+that incident to resolved. The worker's indexing and backup alerts stay separate
+and require their own producer evidence. The probe never submits memory text,
+runs capture or backfill, or selects a provider. Explicitly bound external
+embedding spaces use one synthetic request per mode at this cadence.
+
+Use a bounded transient service for a memory-heavy local encoder. Size it from
+the measured peak and enforce a deadline shorter than the enclosing command.
+Keep the preexisting observer's own memory cap. If a binding is intentionally
+retired, retire its observation through the existing owner control before
+removing its configuration. Preserve the observer journal, publisher state and
+worker cursors on rollback. For approved model replacement, qualify and backfill
+the new space alongside the former one, then verify matching worker and retrieval
+configuration before declaring restoration.
