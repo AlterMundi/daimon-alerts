@@ -56,6 +56,7 @@ jobs:
       - run: python tests/matrix_local_health_io.py
       - run: python tests/owner_repair_io.py
       - run: python tests/service_monitor_io.py
+      - run: python tests/embedding_observation.py
       - run: python tests/provider_auth_io.py
       - run: python tests/runtime_health_io.py
       - run: python tests/hosted_enrollment_io.py
