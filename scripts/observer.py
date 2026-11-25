@@ -58,7 +58,7 @@ class Observer:
         self.embedding_probe=config.get('embedding_probe')
         if self.embedding_probe is not None:
             args=self.embedding_probe
-            if (not isinstance(args,list) or not 1<=len(args)<=12
+            if (not isinstance(args,list) or not 1<=len(args)<=24
                     or any(not isinstance(arg,str) or not arg or len(arg)>4096 for arg in args)
                     or not Path(args[0]).is_absolute()):
                 raise ValueError('explicit bounded DMK embedding probe required')
