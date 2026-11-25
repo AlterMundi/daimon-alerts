@@ -331,3 +331,16 @@ removing its configuration. Preserve the observer journal, publisher state and
 worker cursors on rollback. For approved model replacement, qualify and backfill
 the new space alongside the former one, then verify matching worker and retrieval
 configuration before declaring restoration.
+
+
+For offline recovery, use DMK's maintained `embedding_health.py` as the
+`embedding_probe` command. It verifies a synthetic ranking and semantic
+retrieval, and can rebuild at most 16 stale or missing vectors from current
+canonical records per pass. The existing observer owns cadence and incident
+identity. Use one replaceable, owner-private receipt and point the existing
+restricted Reports projection (`dmk_reports_health.py --embedding <receipt>`)
+at that file. Reports carries a bounded state and the actual observation
+timestamp, excluding model paths, provider details and record contents. The
+selected window is 375 seconds for the five-minute probe, including scheduling
+and execution grace. Reports can show an unhealthy embedding service even when
+the worker is idle or an unrelated worker alert has resolved.
