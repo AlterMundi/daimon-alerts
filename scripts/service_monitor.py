@@ -331,7 +331,9 @@ class Monitor:
         for k in ('producer_id', 'observer_id', 'receiving_scope'):
             identifier(config[k])
         targets = config['targets']
-        if not 1 <= len(targets) <= 24 or len({t['id'] for t in targets}) != len(targets):
+        dmk_checks = sum(t.get('kind') == 'dmk_lifecycle' for t in targets)
+        if (dmk_checks > 8 or not 1 <= len(targets) <= 16 + dmk_checks
+                or len({t['id'] for t in targets}) != len(targets)):
             raise ValueError('bounded unique target selection required')
         if sum(len(t['endpoints']) for t in targets if t.get('kind')=='https_health_group' and isinstance(t.get('endpoints'),list))>4:
             raise ValueError('at most four external HTTPS health endpoints per observer')

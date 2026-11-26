@@ -345,6 +345,13 @@ selected window is 375 seconds for the five-minute probe, including scheduling
 and execution grace. Reports can show an unhealthy embedding service even when
 the worker is idle or an unrelated worker alert has resolved.
 
+An operator can select up to two independent manual receivers using
+`named_embedding_probes`, a map from stable receiving names to the same
+bounded command format. Each name has its own five-minute sample, operation,
+and incident. A failure for a named receiver leaves the primary receiver's
+sample intact. Give the command only its existing owner-scoped health route.
+Use the name consistently: removing a command is not evidence of recovery.
+
 ### Daily memory review coverage
 
 The existing critical-service observer can select a `dmk_lifecycle` target

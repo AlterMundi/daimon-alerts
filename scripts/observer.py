@@ -56,8 +56,14 @@ class Observer:
     def __init__(self,config):
         self.config=config; self.client=Client(config['base_url'],config['token_file'])
         self.embedding_probe=config.get('embedding_probe')
+        self.named_embedding_probes=config.get('named_embedding_probes', {})
+        if (not isinstance(self.named_embedding_probes, dict) or len(self.named_embedding_probes)>2
+                or any(not re.fullmatch(r'[a-zA-Z0-9-]{1,32}', name) for name in self.named_embedding_probes)):
+            raise ValueError('bounded named DMK receivers required')
+        commands=list(self.named_embedding_probes.values())
         if self.embedding_probe is not None:
-            args=self.embedding_probe
+            commands.append(self.embedding_probe)
+        for args in commands:
             if (not isinstance(args,list) or not 1<=len(args)<=24
                     or any(not isinstance(arg,str) or not arg or len(arg)>4096 for arg in args)
                     or not Path(args[0]).is_absolute()):
@@ -284,33 +290,39 @@ class Observer:
         return result
 
     def embedding_incident(self):
+        self.check_embedding_probe(self.state/'embedding-probe.json', self.embedding_probe)
+        for name, command in self.named_embedding_probes.items():
+            self.check_embedding_probe(self.state/f'embedding-probe.{name}.json', command, name)
+
+    def check_embedding_probe(self, path, command, name=None):
         # Independent of worker activity. One retained sample and issue per route.
-        path=self.state/'embedding-probe.json'
+        receiver=f'{name}’s memory' if name else 'The selected memory'
+        operation=self.config['observer_id'] + (f':{name}' if name else '')
         sample=json.loads(private_text(path)) if path.exists() else {}
         incident=sample.get('incident')
         if incident:
             self.project(incident)
-        if self.embedding_probe is None:
+        if command is None:
             return
         now=int(time.time())
         if 0<=now-sample.get('attempt_at',0)<300:
             return
         atomic(path,dict(sample,attempt_at=now))
         try:
-            result=subprocess.run(self.embedding_probe,stdout=subprocess.DEVNULL,
+            result=subprocess.run(command,stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL,timeout=15)
             healthy=result.returncode==0
         except (OSError,subprocess.TimeoutExpired):
             healthy=False
         if healthy and incident and incident['processing_state']=='open':
             incident=dict(incident,processing_state='resolved',severity='info',
-                          updated_at=now,summary='The selected memory embedding space passed its live check.')
+                          updated_at=now,summary=f'{receiver} embedding space passed its live check.')
         elif not healthy and (not incident or incident['processing_state']=='resolved'):
             import uuid
             incident=dict(incident_id='embedding-'+uuid.uuid4().hex,
-                operation_id='embedding-'+hashlib.sha256(self.config['observer_id'].encode()).hexdigest(),
+                operation_id='embedding-'+hashlib.sha256(operation.encode()).hexdigest(),
                 phase='index',severity='error',problem_code='service_unavailable',
-                summary='The selected memory embedding space did not pass its live check.',
+                summary=f'{receiver} embedding space did not pass its live check.',
                 action='Check the selected model and its index. Recover through the memory producer and verify retrieval.',
                 source_at=now,updated_at=now,processing_state='open',work_preserved=True)
         atomic(path,dict(attempt_at=now,checked_at=now,healthy=healthy,incident=incident))
@@ -330,8 +342,11 @@ class Observer:
                     action='Retained producer work and delivery receipts are unchanged; no source recovery is inferred.')
                 atomic(path,value)
             self.project(value)
-        embedding_path=self.state/'embedding-probe.json'
-        if embedding_path.exists():
+        paths=[self.state/'embedding-probe.json']
+        paths.extend(self.state/f'embedding-probe.{name}.json' for name in self.named_embedding_probes)
+        for embedding_path in paths:
+            if not embedding_path.exists():
+                continue
             sample=json.loads(private_text(embedding_path))
             incident=sample.get('incident')
             if incident and incident['processing_state']=='open':
