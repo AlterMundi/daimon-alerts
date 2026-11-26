@@ -70,6 +70,52 @@ class Probes(unittest.TestCase):
                         'schema': 'dm.monitor.dmk-lifecycle/v1', 'state': expected,
                     })
 
+    def test_paired_review_requires_a_real_scheduled_result_and_eligible_decision(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import time
+        from dmk_lifecycle_probe import CHECK
+
+        now = int(time.time())
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            profile = state/'paired.json'
+            profile.write_text(json.dumps(dict(state_dir=directory)))
+            stale = now - 100000
+            cases = [
+                (False, '', '', 'success', 0, now, 'dmk_review_not_scheduled'),
+                (True, '', '', 'success', 0, now, 'dmk_review_unconfirmed'),
+                (True, str(stale), str(stale), 'success', 1, now, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'exit-code', 0, now, 'dmk_review_sleep_blocked'),
+                (True, str(now-5), str(now-3), 'success', 0, now-8, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'success', 0, now, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'success', 1, now, 'healthy'),
+            ]
+            for active, trigger, start, result, classified, stamp, expected in cases:
+                with self.subTest(expected=expected, trigger=trigger, start=start, stamp=stamp):
+                    triage = dict(state='caught_up', classified_pages=classified)
+                    (state/'receiving.json').write_text(json.dumps(dict(
+                        state='caught_up', capture_complete=True, triage=triage)))
+                    (state/'worker-status.json').write_text(json.dumps(dict(
+                        schema='hmk.worker-status/v1', owner='paired-sleep',
+                        updated_ns=stamp*10**9, sleep_triage=triage)))
+                    timed = 'active' if active else 'inactive'
+                    commands = [
+                        Mock(stdout='LoadState=not-found\nActiveState=inactive\n'),
+                        Mock(stdout=f'LoadState=loaded\nActiveState={timed}\n'
+                                    f'Triggers=dmk-paired-sleep.service\nLastTriggerUSec={trigger}\n'),
+                        Mock(stdout=f'LoadState=loaded\nActiveState=inactive\nResult={result}\n'
+                                    f'ExecMainStartTimestamp={start}\n'
+                                    f'ExecStart={{ argv[]=/program --profile {profile} ; }}\n'),
+                    ]
+                    output = StringIO()
+                    with (patch('sys.argv', ['probe', 'system']),
+                          patch('subprocess.run', side_effect=commands),
+                          patch('subprocess.check_output', side_effect=lambda args, **kw: args[2]),
+                          redirect_stdout(output)):
+                        exec(CHECK, {})
+                    self.assertEqual(json.loads(output.getvalue())['state'], expected)
+
     def test_explicit_https_group_is_bounded_and_credential_free(self):
         target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
                     endpoints=[dict(id='one',url='https://one.example/interaction/health'),
