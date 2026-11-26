@@ -42,6 +42,23 @@ def unit_time(value):
     return int(subprocess.check_output(['date', '-d', value, '+%s'], text=True, timeout=2))
 
 
+def classified_evidence(state, triage):
+    classified = triage.get('classified_pages')
+    if type(classified) is int and classified > 0:
+        return 'healthy'
+    # A quiet cycle may retain prior qualification. Initial empty runs cannot
+    # establish it; require an actual completed decision under this inbox.
+    candidates = list((state / 'triage' / 'packets').glob('*.json'))
+    if len(candidates) > 2048:
+        return 'observation_unreadable'
+    for packet in sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True):
+        evidence = read(packet)
+        if evidence.get('state') == 'classified' and evidence.get('decision') and evidence.get('sources'):
+            return 'healthy'
+    return 'dmk_review_unconfirmed'
+
+
+
 def paired_review():
     service = 'dmk-paired-sleep.service'
     timer = properties('dmk-paired-sleep.timer', 'LoadState', 'ActiveState', 'Triggers',
@@ -88,26 +105,15 @@ def paired_review():
         verified = backup.get('verified_baselines')
         if backup.get('state') != 'current' or type(verified) is not int or verified < 1:
             return 'dmk_review_unconfirmed'
-    classified = triage.get('classified_pages')
-    if type(classified) is int and classified > 0:
-        return 'healthy'
-    # A quiet cycle may retain prior qualification. Initial empty runs cannot
-    # establish it; require an actual completed decision under this inbox.
-    candidates = list((state / 'triage' / 'packets').glob('*.json'))
-    if len(candidates) > 2048:
-        return 'observation_unreadable'
-    for packet in sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True):
-        evidence = read(packet)
-        if evidence.get('state') == 'classified' and evidence.get('decision') and evidence.get('sources'):
-            return 'healthy'
-    return 'dmk_review_unconfirmed'
-
+    return classified_evidence(state, triage)
 
 def classify():
-    timer = properties('hmk-memory-worker.timer', 'LoadState', 'ActiveState', 'Triggers')
+    timer = properties('hmk-memory-worker.timer', 'LoadState', 'ActiveState', 'Triggers',
+                       'LastTriggerUSec')
     if not active_timer(timer, 'hmk-memory-worker.service'):
         return paired_review()
-    job = properties('hmk-memory-worker.service', 'LoadState', 'ExecStart')
+    job = properties('hmk-memory-worker.service', 'LoadState', 'ExecStart',
+                     'ActiveState', 'ExecMainStartTimestamp')
     if job.get('LoadState') != 'loaded':
         return 'dmk_review_not_scheduled'
     argv = shlex.split(job['ExecStart'].split('argv[]=', 1)[1].split(' ;', 1)[0])
@@ -152,7 +158,19 @@ def classify():
     if status.get('state') == 'idle' and all(
             phase.get('state') in ('idle', 'complete') for phase in phases
     ) and backup == 'current':
-        return 'healthy'
+        paired = profile.get('sleep_triage', {}).get('paired_profile')
+        if paired is None:
+            return 'healthy'
+        fired = unit_time(timer.get('LastTriggerUSec'))
+        started = unit_time(job.get('ExecMainStartTimestamp'))
+        if (fired is None or started is None or started < fired or stamp / 1e9 < started
+                or not -60 <= time.time() - fired <= 90000
+                or job.get('ActiveState') in ('active', 'activating')
+                or sleep.get('source') != 'paired_conversation'
+                or sleep.get('capture_complete') is not True):
+            return 'dmk_review_unconfirmed'
+        selected = read(paired)
+        return classified_evidence(Path(selected['state_dir']), sleep)
     return 'dmk_review_unconfirmed'
 
 try:

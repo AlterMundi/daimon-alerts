@@ -124,6 +124,47 @@ class Probes(unittest.TestCase):
                         exec(CHECK, {})
                     self.assertEqual(json.loads(output.getvalue())['state'], expected)
 
+    def test_supervised_pair_does_not_inherit_old_scope_or_empty_run_as_health(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import time
+        from dmk_lifecycle_probe import CHECK
+        now = int(time.time())
+        phases = {name: dict(state='complete') for name in ('capture', 'organization', 'index')}
+        with tempfile.TemporaryDirectory() as directory:
+            local = Path(directory)
+            pair = local/'pair.json'
+            pair.write_text(json.dumps(dict(state_dir=directory)))
+            worker = local/'profile.json'
+            worker.write_text(json.dumps(dict(state_dir=directory, sleep_triage=dict(paired_profile=str(pair)))))
+            cases = [
+                ('', now-3, 'paired_conversation', 1, 'dmk_review_unconfirmed'),
+                (str(now-5), now-6, 'paired_conversation', 1, 'dmk_review_unconfirmed'),
+                (str(now-5), now-3, 'previous_capture', 1, 'dmk_review_unconfirmed'),
+                (str(now-5), now-3, 'paired_conversation', 0, 'dmk_review_unconfirmed'),
+                (str(now-5), now-3, 'paired_conversation', 1, 'healthy'),
+            ]
+            for last, start, source, classified, expected in cases:
+                with self.subTest(last=last, source=source, classified=classified):
+                    status = dict(schema='hmk.worker-status/v1', updated_ns=now*10**9,
+                                  state='idle', backup=dict(state='current'), phases=phases,
+                                  sleep_triage=dict(state='caught_up', source=source, capture_complete=True,
+                                                    classified_pages=classified))
+                    (local/'worker-status.json').write_text(json.dumps(status))
+                    commands = [
+                        Mock(stdout='LoadState=loaded\nActiveState=active\n'
+                                    f'Triggers=hmk-memory-worker.service\nLastTriggerUSec={last}\n'),
+                        Mock(stdout='LoadState=loaded\nActiveState=inactive\n'
+                                    f'ExecMainStartTimestamp={start}\nExecStart={{ argv[]=/program --profile {worker} ; }}\n'),
+                    ]
+                    output = StringIO()
+                    with (patch('sys.argv', ['probe', 'user']),
+                          patch('subprocess.run', side_effect=commands),
+                          patch('subprocess.check_output', side_effect=lambda args, **kw: args[2]),
+                          redirect_stdout(output)):
+                        exec(CHECK, {})
+                    self.assertEqual(json.loads(output.getvalue())['state'], expected)
+
     def test_explicit_https_group_is_bounded_and_credential_free(self):
         target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
                     endpoints=[dict(id='one',url='https://one.example/interaction/health'),
