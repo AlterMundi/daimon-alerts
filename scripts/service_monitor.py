@@ -816,14 +816,15 @@ class Monitor:
                 return 'observation_unreadable', None
         def observations():
             nonlocal available
-            native = [t for t in targets if t['kind'] == 'incus_native']
+            remote_kinds = {'incus_native', 'dmk_lifecycle'}
+            remote = [target for target in targets if target['kind'] in remote_kinds]
             for target in targets:
-                if target['kind'] != 'incus_native':
+                if target['kind'] not in remote_kinds:
                     yield target, observe(target)
-            if not native:
+            if not remote:
                 return
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-                pending = {pool.submit(observe, t): t for t in native}
+                pending = {pool.submit(observe, target): target for target in remote}
                 heartbeat_at = time.monotonic() + 10
                 while pending:
                     done, _ = concurrent.futures.wait(pending,
