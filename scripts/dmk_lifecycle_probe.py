@@ -76,11 +76,18 @@ def paired_review():
     triage = receipt.get('triage', {})
     if fresh and triage.get('reason_code') == 'dispatch_unresolved':
         return 'dmk_review_dispatch_unresolved'
+    backup = receipt.get('backup', {})
+    if fresh and 'backup_profile' in profile and backup.get('state') == 'failed':
+        return 'dmk_review_incomplete'
     if job.get('Result') != 'success' or (fresh and receipt.get('state') == 'blocked'):
         return 'dmk_review_sleep_blocked'
     if (not fresh or receipt.get('state') != 'caught_up' or receipt.get('capture_complete') is not True
             or triage != status.get('sleep_triage') or triage.get('state') != 'caught_up'):
         return 'dmk_review_unconfirmed'
+    if 'backup_profile' in profile:
+        verified = backup.get('verified_baselines')
+        if backup.get('state') != 'current' or type(verified) is not int or verified < 1:
+            return 'dmk_review_unconfirmed'
     classified = triage.get('classified_pages')
     if type(classified) is int and classified > 0:
         return 'healthy'

@@ -80,22 +80,30 @@ class Probes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
             profile = state/'paired.json'
-            profile.write_text(json.dumps(dict(state_dir=directory)))
             stale = now - 100000
             cases = [
-                (False, '', '', 'success', 0, now, 'dmk_review_not_scheduled'),
-                (True, '', '', 'success', 0, now, 'dmk_review_unconfirmed'),
-                (True, str(stale), str(stale), 'success', 1, now, 'dmk_review_unconfirmed'),
-                (True, str(now-5), str(now-3), 'exit-code', 0, now, 'dmk_review_sleep_blocked'),
-                (True, str(now-5), str(now-3), 'success', 0, now-8, 'dmk_review_unconfirmed'),
-                (True, str(now-5), str(now-3), 'success', 0, now, 'dmk_review_unconfirmed'),
-                (True, str(now-5), str(now-3), 'success', 1, now, 'healthy'),
+                (False, '', '', 'success', 0, now, None, 'dmk_review_not_scheduled'),
+                (True, '', '', 'success', 0, now, None, 'dmk_review_unconfirmed'),
+                (True, str(stale), str(stale), 'success', 1, now, None, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'exit-code', 0, now, None, 'dmk_review_sleep_blocked'),
+                (True, str(now-5), str(now-3), 'success', 0, now-8, None, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'success', 0, now, None, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'success', 1, now, None, 'healthy'),
+                (True, str(now-5), str(now-3), 'success', 1, now, {}, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'success', 1, now, dict(state='current', verified_baselines=0), 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'exit-code', 1, now, dict(state='failed'), 'dmk_review_incomplete'),
+                (True, str(now-5), str(now-3), 'success', 1, now, dict(state='current', verified_baselines=1), 'healthy'),
             ]
-            for active, trigger, start, result, classified, stamp, expected in cases:
+            for active, trigger, start, result, classified, stamp, backup, expected in cases:
                 with self.subTest(expected=expected, trigger=trigger, start=start, stamp=stamp):
                     triage = dict(state='caught_up', classified_pages=classified)
-                    (state/'receiving.json').write_text(json.dumps(dict(
-                        state='caught_up', capture_complete=True, triage=triage)))
+                    selection = dict(state_dir=directory)
+                    receipt = dict(state='caught_up', capture_complete=True, triage=triage)
+                    if backup is not None:
+                        selection['backup_profile'] = '/example/owner-backup.json'
+                        receipt['backup'] = backup
+                    profile.write_text(json.dumps(selection))
+                    (state/'receiving.json').write_text(json.dumps(receipt))
                     (state/'worker-status.json').write_text(json.dumps(dict(
                         schema='hmk.worker-status/v1', owner='paired-sleep',
                         updated_ns=stamp*10**9, sleep_triage=triage)))
