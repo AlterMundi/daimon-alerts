@@ -122,7 +122,7 @@ def https_group(target):
 
 DMK_LIFECYCLE_STATES = {
     'healthy', 'observation_unreadable', 'dmk_review_not_scheduled',
-    'dmk_review_unconfirmed', 'dmk_review_incomplete',
+    'dmk_review_unconfirmed', 'dmk_review_incomplete', 'dmk_review_source_context_limited',
 }
 
 
@@ -728,6 +728,7 @@ class Monitor:
                 'healthy': 'daily memory review verified',
                 'dmk_review_not_scheduled': 'daily memory review is not scheduled',
                 'dmk_review_incomplete': 'daily memory review could not finish',
+                'dmk_review_source_context_limited': 'daily memory review needs more source context than configured',
             }.get(reason, 'daily memory review could not be verified') + '.'
         severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
         if prior and prior['processing_state'] == 'open':

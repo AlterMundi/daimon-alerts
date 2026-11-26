@@ -354,6 +354,9 @@ Use the name consistently: removing a command is not evidence of recovery.
 
 ### Daily memory review coverage
 
+A fresh worker receipt blocked by its source context limit has a distinct
+incident summary. The underlying byte count stays in the owner's worker receipt.
+
 The existing critical-service observer can select a `dmk_lifecycle` target
 per body. Its operator-selected command accepts only a closed
 `dm.monitor.dmk-lifecycle/v1` response. The supplied
