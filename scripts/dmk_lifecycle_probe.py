@@ -55,6 +55,8 @@ def classified_evidence(state, triage):
         evidence = read(packet)
         if evidence.get('state') == 'classified' and evidence.get('decision') and evidence.get('sources'):
             return 'healthy'
+    if classified == 0 and type(triage.get('completed_pages')) is int:
+        return 'dmk_review_no_eligible_input'
     return 'dmk_review_unconfirmed'
 
 
@@ -150,9 +152,15 @@ def classify():
     )
     if stalled or backup == 'failed':
         return 'dmk_review_incomplete'
+    if sleep.get('state') == 'blocked':
+        return 'dmk_review_sleep_blocked'
+    if any(
+        phase.get('state') in ('pending', 'deferred')
+        and phase.get('reason_code') in ('navigation_budget_exhausted', 'index_budget_exhausted')
+        for phase in phases
+    ):
+        return 'dmk_review_cycle_limited'
     if sleep_selected:
-        if sleep.get('state') == 'blocked':
-            return 'dmk_review_sleep_blocked'
         if sleep.get('state') != 'caught_up':
             return 'dmk_review_unconfirmed'
     if status.get('state') == 'idle' and all(
