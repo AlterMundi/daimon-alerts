@@ -18,6 +18,17 @@ def configuration(path):
 
 
 class Probes(unittest.TestCase):
+    def test_dmk_lifecycle_requires_closed_evidence(self):
+        target = dict(kind='dmk_lifecycle', command=['/configured/dmk-lifecycle'])
+        payload = dict(schema='dm.monitor.dmk-lifecycle/v1', state='dmk_review_not_scheduled')
+        with patch('service_monitor.subprocess.run') as run:
+            run.return_value.stdout = json.dumps(payload)
+            self.assertEqual(probe(target), 'dmk_review_not_scheduled')
+            run.return_value.stdout = json.dumps(dict(payload, transcript='private'))
+            self.assertEqual(probe(target), 'observation_unreadable')
+            run.return_value.stdout = json.dumps(dict(payload, state=['healthy']))
+            self.assertEqual(probe(target), 'observation_unreadable')
+
     def test_explicit_https_group_is_bounded_and_credential_free(self):
         target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',
                     endpoints=[dict(id='one',url='https://one.example/interaction/health'),

@@ -345,10 +345,29 @@ selected window is 375 seconds for the five-minute probe, including scheduling
 and execution grace. Reports can show an unhealthy embedding service even when
 the worker is idle or an unrelated worker alert has resolved.
 
-
 An operator can select up to two independent manual receivers using
 `named_embedding_probes`, a map from stable receiving names to the same
 bounded command format. Each name has its own five-minute sample, operation,
 and incident. A failure for a named receiver leaves the primary receiver's
 sample intact. Give the command only its existing owner-scoped health route.
 Use the name consistently: removing a command is not evidence of recovery.
+
+### Daily memory review coverage
+
+The existing critical-service observer can select a `dmk_lifecycle` target
+per body. Its operator-selected command accepts only a closed
+`dm.monitor.dmk-lifecycle/v1` response. The supplied
+`scripts/dmk_lifecycle_probe.py` uses the existing preventive SysOps transport,
+validates its inventory, and reads only the selected timer, worker, profile
+and bounded worker receipt. It never opens a conversation, reads the memory
+store, starts a worker or invokes a provider. Use the receiving systemd scope
+and a private operator-owned SysOps inventory. Extend the current observer
+binding through `--extend-to` so existing incident revisions are preserved.
+
+A missing review schedule, unreadable or stale evidence, and an incomplete
+review are separate observations. Healthy requires a fresh worker receipt
+with capture, organization, indexing and backup evidence. The live embedding
+probe is still independent. An idle worker does not prove that a particular
+conversation was authorized, captured, or has retrievable memories. For
+initial adoption, verify the exact selected local conversation, the receiving
+body's authorized review and its actual durable read-back separately.
