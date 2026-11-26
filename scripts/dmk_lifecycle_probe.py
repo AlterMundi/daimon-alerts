@@ -31,12 +31,75 @@ def read(path):
         raise ValueError('receipt too large')
     return json.loads(raw)
 
+def active_timer(timer, service):
+    return (timer.get('LoadState') == 'loaded' and timer.get('ActiveState') == 'active'
+            and service in timer.get('Triggers', '').split())
+
+
+def unit_time(value):
+    if not value:
+        return None
+    return int(subprocess.check_output(['date', '-d', value, '+%s'], text=True, timeout=2))
+
+
+def paired_review():
+    service = 'dmk-paired-sleep.service'
+    timer = properties('dmk-paired-sleep.timer', 'LoadState', 'ActiveState', 'Triggers',
+                       'LastTriggerUSec')
+    if not active_timer(timer, service):
+        return 'dmk_review_not_scheduled'
+    fired = unit_time(timer.get('LastTriggerUSec'))
+    if fired is None or not -60 <= time.time() - fired <= 90000:
+        return 'dmk_review_unconfirmed'
+    job = properties(service, 'LoadState', 'ActiveState', 'ExecStart', 'Result',
+                     'ExecMainStartTimestamp')
+    if job.get('LoadState') != 'loaded':
+        return 'dmk_review_not_scheduled'
+    started = unit_time(job.get('ExecMainStartTimestamp'))
+    if started is None or started < fired or job.get('ActiveState') in ('activating', 'active'):
+        return 'dmk_review_unconfirmed'
+
+    argv = shlex.split(job['ExecStart'].split('argv[]=', 1)[1].split(' ;', 1)[0])
+    profile = read(argv[argv.index('--profile') + 1])
+    state = Path(profile['state_dir'])
+    try:
+        receipt = read(state / 'receiving.json')
+        status = read(state / 'worker-status.json')
+    except FileNotFoundError:
+        return ('dmk_review_incomplete' if job.get('Result') != 'success'
+                else 'dmk_review_unconfirmed')
+    stamp = status.get('updated_ns')
+    if (status.get('schema') != 'hmk.worker-status/v1' or status.get('owner') != 'paired-sleep'
+            or type(stamp) is not int):
+        return 'observation_unreadable'
+    fresh = stamp / 1e9 >= started and -60 <= time.time() - stamp / 1e9 <= 90000
+    triage = receipt.get('triage', {})
+    if fresh and triage.get('reason_code') == 'dispatch_unresolved':
+        return 'dmk_review_dispatch_unresolved'
+    if job.get('Result') != 'success' or (fresh and receipt.get('state') == 'blocked'):
+        return 'dmk_review_sleep_blocked'
+    if (not fresh or receipt.get('state') != 'caught_up' or receipt.get('capture_complete') is not True
+            or triage != status.get('sleep_triage') or triage.get('state') != 'caught_up'):
+        return 'dmk_review_unconfirmed'
+    classified = triage.get('classified_pages')
+    if type(classified) is int and classified > 0:
+        return 'healthy'
+    # A quiet cycle may retain prior qualification. Initial empty runs cannot
+    # establish it; require an actual completed decision under this inbox.
+    candidates = list((state / 'triage' / 'packets').glob('*.json'))
+    if len(candidates) > 2048:
+        return 'observation_unreadable'
+    for packet in sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True):
+        evidence = read(packet)
+        if evidence.get('state') == 'classified' and evidence.get('decision') and evidence.get('sources'):
+            return 'healthy'
+    return 'dmk_review_unconfirmed'
+
+
 def classify():
     timer = properties('hmk-memory-worker.timer', 'LoadState', 'ActiveState', 'Triggers')
-    if timer.get('LoadState') == 'not-found' or timer.get('ActiveState') != 'active':
-        return 'dmk_review_not_scheduled'
-    if 'hmk-memory-worker.service' not in timer.get('Triggers', '').split():
-        return 'dmk_review_not_scheduled'
+    if not active_timer(timer, 'hmk-memory-worker.service'):
+        return paired_review()
     job = properties('hmk-memory-worker.service', 'LoadState', 'ExecStart')
     if job.get('LoadState') != 'loaded':
         return 'dmk_review_not_scheduled'

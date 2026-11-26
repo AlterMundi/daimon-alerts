@@ -384,6 +384,14 @@ without retaining its source identity or producing a failure notice. Recovery
 must still use the original matching binding and event.
 
 
+For paired-only receivers the same probe follows `dmk-paired-sleep.timer`
+and its service when the ordinary DMK worker is unscheduled. It checks the
+actual timer trigger against the service start, fresh matching capture and
+review receipts, and evidence of an eligible classified page. An enrollment,
+a manually prepared receipt, or the first empty scheduled run cannot clear a
+review gap. A subsequent quiet cycle may retain an earlier classified packet as
+qualification. These operational checks do not certify a canonical memory write.
+
 ### Change a daily DMK observation time
 
 After selecting the worker's intended calendar, prepare a private observer
