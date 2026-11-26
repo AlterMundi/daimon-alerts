@@ -47,6 +47,8 @@ class Probes(unittest.TestCase):
                    reason_code='source_context_budget_exceeded')), 'dmk_review_source_context_limited'),
             (dict(), dict(phases, capture=dict(state='pending',
                    reason_code='dispatch_unresolved')), 'dmk_review_dispatch_unresolved'),
+            (dict(sleep_triage=dict(state='pending')), dict(phases, capture=dict(
+                   state='pending', reason_code='navigation_budget_exhausted')), 'dmk_review_cycle_limited'),
         ]
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
@@ -88,6 +90,8 @@ class Probes(unittest.TestCase):
                 (True, str(now-5), str(now-3), 'exit-code', 0, now, None, 'dmk_review_sleep_blocked'),
                 (True, str(now-5), str(now-3), 'success', 0, now-8, None, 'dmk_review_unconfirmed'),
                 (True, str(now-5), str(now-3), 'success', 0, now, None, 'dmk_review_unconfirmed'),
+                (True, str(now-5), str(now-3), 'success', 0, now,
+                 dict(state='current', verified_baselines=1), 'dmk_review_no_eligible_input'),
                 (True, str(now-5), str(now-3), 'success', 1, now, None, 'healthy'),
                 (True, str(now-5), str(now-3), 'success', 1, now, {}, 'dmk_review_unconfirmed'),
                 (True, str(now-5), str(now-3), 'success', 1, now, dict(state='current', verified_baselines=0), 'dmk_review_unconfirmed'),
@@ -97,6 +101,8 @@ class Probes(unittest.TestCase):
             for active, trigger, start, result, classified, stamp, backup, expected in cases:
                 with self.subTest(expected=expected, trigger=trigger, start=start, stamp=stamp):
                     triage = dict(state='caught_up', classified_pages=classified)
+                    if expected == 'dmk_review_no_eligible_input':
+                        triage['completed_pages'] = 0
                     selection = dict(state_dir=directory)
                     receipt = dict(state='caught_up', capture_complete=True, triage=triage)
                     if backup is not None:

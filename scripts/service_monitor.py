@@ -124,6 +124,7 @@ DMK_LIFECYCLE_STATES = {
     'healthy', 'observation_unreadable', 'dmk_review_not_scheduled',
     'dmk_review_unconfirmed', 'dmk_review_incomplete', 'dmk_review_source_context_limited',
     'dmk_review_sleep_blocked', 'dmk_review_dispatch_unresolved',
+    'dmk_review_no_eligible_input', 'dmk_review_cycle_limited',
 }
 
 
@@ -732,8 +733,11 @@ class Monitor:
                 'dmk_review_source_context_limited': 'daily memory review needs more source context than configured',
                 'dmk_review_sleep_blocked': 'memory consolidation is blocked',
                 'dmk_review_dispatch_unresolved': 'daily memory review is waiting for confirmation of an earlier request',
+                'dmk_review_no_eligible_input': 'daily cycle completed with no eligible input. Memory review still needs verification',
+                'dmk_review_cycle_limited': 'daily cycle reached its configured work limit. Review will continue on the next scheduled cycle',
             }.get(reason, 'daily memory review could not be verified') + '.'
-        severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
+        severity = 'warning' if reason in ('memory_reclaim_pressure', 'native_restarted',
+                                            'dmk_review_no_eligible_input', 'dmk_review_cycle_limited') else 'error'
         if prior and prior['processing_state'] == 'open':
             if active and prior['summary'] == summary:
                 return
