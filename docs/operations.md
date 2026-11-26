@@ -376,3 +376,15 @@ A companion source binding may narrow capture to one explicit native
 `selected_session_id`. The supervisor records an unrelated session as excluded
 without retaining its source identity or producing a failure notice. Recovery
 must still use the original matching binding and event.
+
+
+### Change a daily DMK observation time
+
+After selecting the worker's intended calendar, prepare a private observer
+configuration differing only in `worker_daily_utc` (HH:MM). With only that
+observer stopped, use `observer.py --config <current> --change-worker-cadence-to
+<successor>`, then run its existing service using the successor. The binding
+change preserves the observer's state, incident revisions and other evidence.
+If startup fails before it can observe, use the same command with the
+configuration order reversed. Never restore an older observer database over new
+observations. This control does not start the DMK worker.

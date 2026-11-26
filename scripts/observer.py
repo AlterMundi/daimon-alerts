@@ -113,6 +113,24 @@ class Observer:
         self.provider=importlib.import_module('provider_status')
         if not hasattr(self.provider,'safe_projection'): raise ValueError('qualified safe HMK projection required')
         self.inbox=ReadOnlyInbox(config['inbox'],config['inbox_binding'])
+    def change_worker_cadence(self, successor):
+        """Change only the expected daily start time under the existing observer lock."""
+        key='worker_daily_utc'
+        before=self.config.get(key)
+        after=successor.get(key)
+        if (self.config.get('worker_mode')!='oneshot' or before is None
+                or not isinstance(after,str) or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]',after)
+                or dict(self.config,worker_daily_utc=after)!=successor):
+            raise ValueError('compatible configured daily cadence change required')
+        with self.db:
+            raw=self.db.execute('SELECT value FROM binding').fetchone()[0]
+            binding=json.loads(raw)
+            if binding.get(key)!=before:
+                raise ValueError('retained cadence differs from current profile')
+            binding[key]=after
+            self.db.execute('UPDATE binding SET value=? WHERE value=?',(json.dumps(binding,sort_keys=True),raw))
+        return dict(previous_daily_utc=before,daily_utc=after,processing_invoked=False)
+
     def project(self,fields):
         value=dict(schema='daimon-alerts/v1',producer_id=self.config['producer_id'],receiving_scope=self.config['receiving_scope'],resource_ref=self.config['resource_ref'],**fields)
         content=json.dumps(value,sort_keys=True,separators=(',',':'))
@@ -452,12 +470,19 @@ def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--config',required=True); parser.add_argument('--once',action='store_true')
     parser.add_argument('--adopt-capture-from');parser.add_argument('--retire',action='store_true')
     parser.add_argument('--reconcile-budget-phase',choices=['capture','index'])
+    parser.add_argument('--change-worker-cadence-to', help='Exact successor configuration; only the daily UTC time may change')
     parser.add_argument('--worker-sha256');parser.add_argument('--reason');args=parser.parse_args()
     try:
         config=json.loads(private_text(args.config))
         if args.adopt_capture_from:
             print(json.dumps(adopt_capture(config,json.loads(private_text(args.adopt_capture_from)))));return
         observer=Observer(config)
+        if args.change_worker_cadence_to:
+            try:
+                successor=json.loads(private_text(args.change_worker_cadence_to))
+                print(json.dumps(observer.change_worker_cadence(successor)))
+                return
+            finally:observer.db.close();observer.lock.close()
         if args.reconcile_budget_phase:
             try:print(json.dumps(observer.reconcile_budget(args.reconcile_budget_phase,args.worker_sha256,args.reason)));return
             finally:observer.db.close();observer.lock.close()
