@@ -23,6 +23,37 @@ class ObserverHTTP(unittest.TestCase):
     tearDown=Contract.tearDown
     call=Contract.call
     pending=Contract.pending
+    def test_daily_cadence_change_preserves_projection_revisions(self):
+        from capture_supervisor import atomic
+        token=self.directory/'cadence-token'
+        token.write_text(self.tokens['producer']);token.chmod(0o600)
+        cfg=dict(base_url=self.base,token_file=str(token),state_dir=str(self.directory/'cadence'),
+                 hmk_source=str(HMK),producer_id='fictional-hmk',observer_id='fictional-observer',
+                 receiving_scope='fictional-human',resource_ref='fictional-worker',
+                 inbox=str(self.directory/'inbox.sqlite'),inbox_binding={'subject':'fictional'},
+                 worker_state_dir=str(self.directory/'worker'),worker_unit='fixture.service',
+                 worker_mode='oneshot',worker_daily_utc='00:00',worker_cadence_grace_seconds=300,
+                 source_freshness_seconds=60,stalled_seconds=10)
+        updated=dict(cfg,worker_daily_utc='11:00')
+        old=Observer(cfg)
+        sentinel=dict(state='retained')
+        try:
+            with old.db:
+                old.db.execute("INSERT INTO projections VALUES ('existing',7,'{}',1)")
+            atomic(old.state/'source-incident.json',sentinel)
+            with self.assertRaises(ValueError):
+                old.change_worker_cadence(dict(updated,receiving_scope='foreign'))
+            self.assertEqual(old.change_worker_cadence(updated)['daily_utc'],'11:00')
+        finally:
+            old.db.close();old.lock.close()
+        new=Observer(updated)
+        try:
+            self.assertEqual(new.db.execute('SELECT * FROM projections').fetchone(),('existing',7,'{}',1))
+            self.assertEqual(json.loads((new.state/'source-incident.json').read_text()),sentinel)
+            self.assertEqual(new.change_worker_cadence(cfg)['daily_utc'],'00:00')
+        finally:
+            new.db.close();new.lock.close()
+
     def test_capture_gap_independent_of_inbox_and_explicit_resolution(self):
         self.process.terminate();self.process.communicate()
         self.config['actors'][0]['grants'].append('observe');self.config['actors'][0]['producers'].append('fictional-observer')
