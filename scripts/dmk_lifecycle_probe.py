@@ -53,6 +53,14 @@ def classify():
         return 'dmk_review_unconfirmed'
     phases = [status['phases'].get(name, {}) for name in ('capture', 'organization', 'index')]
     backup = status.get('backup', {}).get('state')
+    sleep_selected = 'sleep_triage' in profile
+    sleep = status.get('sleep_triage', {}) if sleep_selected else {}
+    if any(
+        phase.get('state') in ('pending', 'deferred', 'blocked')
+        and phase.get('reason_code') == 'dispatch_unresolved'
+        for phase in [*phases, sleep]
+    ):
+        return 'dmk_review_dispatch_unresolved'
     if any(
         phase.get('state') in ('pending', 'deferred')
         and phase.get('reason_code') == 'source_context_budget_exceeded'
@@ -66,6 +74,11 @@ def classify():
     )
     if stalled or backup == 'failed':
         return 'dmk_review_incomplete'
+    if sleep_selected:
+        if sleep.get('state') == 'blocked':
+            return 'dmk_review_sleep_blocked'
+        if sleep.get('state') != 'caught_up':
+            return 'dmk_review_unconfirmed'
     if status.get('state') == 'idle' and all(
             phase.get('state') in ('idle', 'complete') for phase in phases
     ) and backup == 'current':

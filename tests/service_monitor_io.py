@@ -31,33 +31,44 @@ class Probes(unittest.TestCase):
             run.return_value.stdout = json.dumps(dict(payload, state=['healthy']))
             self.assertEqual(probe(target), 'observation_unreadable')
 
-    def test_dmk_probe_preserves_a_fresh_source_context_limit(self):
+    def test_dmk_probe_reports_blockers_and_requires_configured_sleep(self):
         from contextlib import redirect_stdout
         from io import StringIO
         import time
         from dmk_lifecycle_probe import CHECK
 
+        phases = {name: dict(state='complete') for name in ('capture', 'organization', 'index')}
+        cases = [
+            (dict(), phases, 'dmk_review_unconfirmed'),
+            (dict(sleep_triage=dict(state='pending')), phases, 'dmk_review_unconfirmed'),
+            (dict(sleep_triage=dict(state='caught_up')), phases, 'healthy'),
+            (dict(sleep_triage=dict(state='blocked')), phases, 'dmk_review_sleep_blocked'),
+            (dict(), dict(phases, capture=dict(state='deferred',
+                   reason_code='source_context_budget_exceeded')), 'dmk_review_source_context_limited'),
+            (dict(), dict(phases, capture=dict(state='pending',
+                   reason_code='dispatch_unresolved')), 'dmk_review_dispatch_unresolved'),
+        ]
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
             profile = state/'worker.json'
-            profile.write_text(json.dumps(dict(state_dir=directory)))
-            receipt = dict(schema='hmk.worker-status/v1', updated_ns=time.time_ns(),
-                           phases=dict(capture=dict(state='deferred',
-                                      reason_code='source_context_budget_exceeded',
-                                      minimum_required_bytes=130807)))
-            (state/'worker-status.json').write_text(json.dumps(receipt))
-            commands = [
-                Mock(stdout='LoadState=loaded\nActiveState=active\nTriggers=hmk-memory-worker.service\n'),
-                Mock(stdout=f'LoadState=loaded\nExecStart={{ argv[]=/program --profile {profile} ; }}\n'),
-            ]
-            output = StringIO()
-            with patch('sys.argv', ['probe', 'system']), patch('subprocess.run', side_effect=commands):
-                with redirect_stdout(output):
-                    exec(CHECK, {})
-            self.assertEqual(json.loads(output.getvalue()), {
-                'schema': 'dm.monitor.dmk-lifecycle/v1',
-                'state': 'dmk_review_source_context_limited',
-            })
+            profile.write_text(json.dumps(dict(state_dir=directory, sleep_triage={})))
+            for extra, selected_phases, expected in cases:
+                with self.subTest(expected=expected):
+                    receipt = dict(schema='hmk.worker-status/v1', updated_ns=time.time_ns(),
+                                   state='idle', backup=dict(state='current'),
+                                   phases=selected_phases, **extra)
+                    (state/'worker-status.json').write_text(json.dumps(receipt))
+                    commands = [
+                        Mock(stdout='LoadState=loaded\nActiveState=active\nTriggers=hmk-memory-worker.service\n'),
+                        Mock(stdout=f'LoadState=loaded\nExecStart={{ argv[]=/program --profile {profile} ; }}\n'),
+                    ]
+                    output = StringIO()
+                    with patch('sys.argv', ['probe', 'system']), patch('subprocess.run', side_effect=commands):
+                        with redirect_stdout(output):
+                            exec(CHECK, {})
+                    self.assertEqual(json.loads(output.getvalue()), {
+                        'schema': 'dm.monitor.dmk-lifecycle/v1', 'state': expected,
+                    })
 
     def test_explicit_https_group_is_bounded_and_credential_free(self):
         target=dict(id='deployment',resource_ref='fictional-host',kind='https_health_group',

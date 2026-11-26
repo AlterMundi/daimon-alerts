@@ -354,8 +354,11 @@ Use the name consistently: removing a command is not evidence of recovery.
 
 ### Daily memory review coverage
 
-A fresh worker receipt blocked by its source context limit has a distinct
-incident summary. The underlying byte count stays in the owner's worker receipt.
+A fresh worker receipt distinguishes a source context limit, an unresolved
+request and blocked consolidation. The underlying byte counts and request
+evidence stay in the owner's worker receipt. If the worker profile selects
+sleep triage, a healthy observation requires that cycle to report it caught up.
+An idle capture phase alone does not establish memory consolidation.
 
 The existing critical-service observer can select a `dmk_lifecycle` target
 per body. Its operator-selected command accepts only a closed
