@@ -392,7 +392,10 @@ a manually prepared receipt, or the first empty scheduled run cannot clear a
 review gap. A subsequent quiet cycle may retain an earlier classified packet as
 qualification. When that worker selects periodic backups, its same-cycle
 receipt must also report current protection and at least one verified baseline.
-These operational checks do not certify a canonical memory write.
+The same positive paired evidence is required when an existing supervised
+worker configures a separate paired review. Its earlier broad-scope receipts
+cannot qualify the newly selected conversation. These operational checks do
+not certify a canonical memory write.
 
 ### Change a daily DMK observation time
 
