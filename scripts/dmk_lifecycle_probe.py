@@ -53,6 +53,12 @@ def classify():
         return 'dmk_review_unconfirmed'
     phases = [status['phases'].get(name, {}) for name in ('capture', 'organization', 'index')]
     backup = status.get('backup', {}).get('state')
+    if any(
+        phase.get('state') in ('pending', 'deferred')
+        and phase.get('reason_code') == 'source_context_budget_exceeded'
+        for phase in phases
+    ):
+        return 'dmk_review_source_context_limited'
     stalled = any(
         phase.get('state') in ('pending', 'deferred')
         and phase.get('reason_code') not in ('navigation_budget_exhausted', 'index_budget_exhausted')
