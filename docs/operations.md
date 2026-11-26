@@ -390,7 +390,9 @@ actual timer trigger against the service start, fresh matching capture and
 review receipts, and evidence of an eligible classified page. An enrollment,
 a manually prepared receipt, or the first empty scheduled run cannot clear a
 review gap. A subsequent quiet cycle may retain an earlier classified packet as
-qualification. These operational checks do not certify a canonical memory write.
+qualification. When that worker selects periodic backups, its same-cycle
+receipt must also report current protection and at least one verified baseline.
+These operational checks do not certify a canonical memory write.
 
 ### Change a daily DMK observation time
 
