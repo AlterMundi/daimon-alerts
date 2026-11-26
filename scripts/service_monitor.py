@@ -120,8 +120,29 @@ def https_group(target):
         return 'healthy' if all(list(pool.map(check,target['endpoints']))) else 'health_unavailable'
 
 
+DMK_LIFECYCLE_STATES = {
+    'healthy', 'observation_unreadable', 'dmk_review_not_scheduled',
+    'dmk_review_unconfirmed', 'dmk_review_incomplete',
+}
+
+
+def dmk_lifecycle(command):
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=10, text=True, check=True)
+        value = json.loads(result.stdout) if len(result.stdout) <= 4096 else None
+        if (isinstance(value, dict) and set(value) == {'schema', 'state'}
+                and value['schema'] == 'dm.monitor.dmk-lifecycle/v1'
+                and isinstance(value['state'], str) and value['state'] in DMK_LIFECYCLE_STATES):
+            return value['state']
+    except (ValueError, OSError, subprocess.SubprocessError):
+        pass
+    return 'observation_unreadable'
+
+
 def probe(target):
     """Return only a closed health code; never expose response/tab/process data."""
+    if target['kind'] == 'dmk_lifecycle':
+        return dmk_lifecycle(target['command'])
     if target['kind'] == 'provider_auth':
         try:
             result = subprocess.run(target['command'], capture_output=True,
@@ -292,7 +313,7 @@ REASONS = {'healthy', 'standby', 'unit_inactive', 'health_unavailable', 'observa
            'provider_login_required', 'provider_unavailable',
            'extension_disconnected', 'extension_unresponsive', 'native_unresponsive',
            'matrix_reader_unavailable', 'matrix_local_capability_expiring', 'matrix_listener_unavailable',
-           'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'}
+           'memory_reclaim_pressure', 'native_restarted', 'memory_oom', 'enrollment_unavailable'} | DMK_LIFECYCLE_STATES
 
 
 class BindingChanged(ValueError):
@@ -310,19 +331,19 @@ class Monitor:
         for k in ('producer_id', 'observer_id', 'receiving_scope'):
             identifier(config[k])
         targets = config['targets']
-        if not 1 <= len(targets) <= 16 or len({t['id'] for t in targets}) != len(targets):
+        if not 1 <= len(targets) <= 24 or len({t['id'] for t in targets}) != len(targets):
             raise ValueError('bounded unique target selection required')
         if sum(len(t['endpoints']) for t in targets if t.get('kind')=='https_health_group' and isinstance(t.get('endpoints'),list))>4:
             raise ValueError('at most four external HTTPS health endpoints per observer')
         for target in targets:
             identifier(target['id']); identifier(target['resource_ref'])
-            if target['kind'] == 'provider_auth':
+            if target['kind'] in ('provider_auth', 'dmk_lifecycle'):
                 command = target.get('command')
                 if (set(target) != {'id', 'resource_ref', 'kind', 'command'}
                         or not isinstance(command, list) or not 1 <= len(command) <= 24
                         or any(not isinstance(arg, str) or not arg or len(arg) > 4096 for arg in command)
                         or not Path(command[0]).is_absolute()):
-                    raise ValueError('explicit bounded provider health adapter required')
+                    raise ValueError('explicit bounded health adapter required')
             elif target['kind'] in ('webbridge', 'http_health'):
                 local_url(target['base_url'])
             elif target['kind']=='https_health_group':
@@ -700,6 +721,12 @@ class Monitor:
         if not active and (not prior or prior['processing_state'] == 'resolved'):
             return
         summary = target['id'] + ': ' + reason.replace('_', ' ') + '.'
+        if target['kind'] == 'dmk_lifecycle':
+            summary = target['id'] + ': ' + {
+                'healthy': 'daily memory review verified',
+                'dmk_review_not_scheduled': 'daily memory review is not scheduled',
+                'dmk_review_incomplete': 'daily memory review could not finish',
+            }.get(reason, 'daily memory review could not be verified') + '.'
         severity = 'warning' if reason in ('memory_reclaim_pressure','native_restarted') else 'error'
         if prior and prior['processing_state'] == 'open':
             if active and prior['summary'] == summary:
@@ -717,6 +744,8 @@ class Monitor:
                          severity=severity, processing_state='open', summary=summary,
                          action=('Provider login must be renewed with the existing selected account when required. Verify authenticated native provider access after recovery. A running process or public health page is insufficient. Never replay failed messages or replace accounts automatically.'
                                  if target['kind'] == 'provider_auth' else
+                                 'Verify the selected conversation capture, daily review, memory retrieval and backup on this body.'
+                                 if target['kind'] == 'dmk_lifecycle' else
                                  'Inspect the selected resource and native control health. The native supervisor recovers a departed daemon while retaining unresponsive work. No model requests, conversation replay or automatic memory resizing.'
                                  if target['kind'] in ('native_codex', 'incus_native', 'cgroup_memory', 'host_memory') else
                                  'Inspect the selected service and browser connection; recover explicitly and verify an actual operation. No models or automatic task retries.'),
