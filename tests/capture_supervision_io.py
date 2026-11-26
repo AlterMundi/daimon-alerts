@@ -43,6 +43,24 @@ class CaptureSupervision(unittest.TestCase):
         source=self.root/'sleeping';(source/'scripts').mkdir(parents=True)
         (source/'scripts/codex_hook_capture.py').write_text('import time\ndef capture(binding,payload):\n time.sleep(30)\n')
         return source
+    def test_unselected_native_session_excludes_and_retains_no_source_identity(self):
+        handler = self.root/'exact-handler'
+        (handler/'scripts').mkdir(parents=True)
+        (handler/'scripts/codex_hook_capture.py').write_text(
+            "def capture(binding, payload):\n"
+            "    return dict(capture_complete=False, skipped=True, reason='unselected_session')\n"
+        )
+        self.binding['selected_session_id'] = str(uuid4())
+        self.path.write_text(json.dumps(self.binding))
+        self.digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        self.assertEqual(self.invoke(handler), {})
+        attempt, = self.attempts()
+        self.assertEqual(attempt['state'], 'skipped')
+        self.assertEqual(attempt['exclusion_reason'], 'unselected_session')
+        self.assertIsNone(attempt['source_ref'])
+        self.assertFalse(self.inbox.exists())
+        self.assertEqual(safe_projection(self.state, self.digest), {'items': []})
+
     def test_initialization_is_not_capture_and_rejects_binding_change(self):
         from capture_supervisor import initialize
         initialize(self.state,self.digest);initialize(self.state,self.digest)

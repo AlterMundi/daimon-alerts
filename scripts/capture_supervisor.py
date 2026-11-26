@@ -22,7 +22,7 @@ import uuid
 
 SCHEMA='hmk.capture-attempt/v1'
 EVENTS={'Stop','SessionEnd','SessionStart','UserPromptSubmit','PostToolUse','PreCompact','PostCompact','Interrupt'}
-EXCLUSIONS={'unselected_working_directory','unselected_session_working_directory','session_precedes_selected_boundary'}
+EXCLUSIONS={'unselected_session','unselected_working_directory','unselected_session_working_directory','session_precedes_selected_boundary'}
 REASONS={'hook_timeout','input_timeout','hook_uncertain','handler_failed','receipt_unavailable','invalid_payload','binding_unreadable','binding_changed',
          'transcript_unavailable','source_exceeds_capture_limit','source_changed_during_capture','source_header_incomplete',
          'session_scope_unverified','transcript_missing','capture_deferred'}
@@ -204,7 +204,9 @@ def prepare_input(args):
     except (ValueError,UnicodeError):return raw,None,None,'invalid_payload'
     event=source_ref=None
     # Do not retain metadata from unselected working directories.
-    if payload.get('cwd') in binding.get('allowed_cwds',[]):
+    selected=binding.get('selected_session_id')
+    if (payload.get('cwd') in binding.get('allowed_cwds',[])
+            and (selected is None or payload.get('session_id')==selected)):
         candidate=payload.get('hook_event_name');sid=payload.get('session_id')
         event=candidate if isinstance(candidate,str) and candidate in EVENTS else None
         if isinstance(sid,str) and 0<len(sid)<=128:

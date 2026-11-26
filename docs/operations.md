@@ -371,3 +371,8 @@ probe is still independent. An idle worker does not prove that a particular
 conversation was authorized, captured, or has retrievable memories. For
 initial adoption, verify the exact selected local conversation, the receiving
 body's authorized review and its actual durable read-back separately.
+
+A companion source binding may narrow capture to one explicit native
+`selected_session_id`. The supervisor records an unrelated session as excluded
+without retaining its source identity or producing a failure notice. Recovery
+must still use the original matching binding and event.
