@@ -3,6 +3,10 @@
 Use the existing `scripts/service_monitor.py` durable producer and the receiving
 Alerts core/Telegram/Sessions adapter. No model, bot consumer, Matrix inbox or
 failed-input replay is part of observation or infrastructure recovery.
+The existing probe renews an unchanged open incident at most once per minute.
+It retains the same ID, initial issue time and open state, so the receiver sees
+fresh evidence and the core creates no second open notification. Verified recovery
+resolves the same incident. An unreadable probe remains an observation problem.
 
 Add only explicitly selected targets to an owner-private observer config:
 

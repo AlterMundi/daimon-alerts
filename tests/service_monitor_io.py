@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
@@ -512,6 +513,25 @@ class Durable(unittest.TestCase):
             self.assertNotEqual(self.sent[-1]['incident_id'],first)
         finally:monitor.close()
 
+    def test_current_open_observation_renews_without_reopening(self):
+        monitor=Monitor(self.config,self.client)
+        try:
+            monitor.tick(lambda _:'extension_disconnected',now=10)
+            monitor.tick(lambda _:'extension_disconnected',now=69)
+            self.assertEqual(len(self.sent),1)
+            monitor.tick(lambda _:'extension_disconnected',now=70)
+            first,current=self.sent
+            self.assertEqual(current['incident_id'],first['incident_id'])
+            self.assertEqual(current['revision'],first['revision']+1)
+            self.assertEqual(current['source_at'],first['source_at'])
+            self.assertEqual(current['updated_at'],70)
+            self.assertEqual(current['processing_state'],'open')
+            monitor.tick(lambda _:'healthy',now=71)
+            self.assertEqual(self.sent[-1]['incident_id'],first['incident_id'])
+            self.assertEqual(self.sent[-1]['processing_state'],'resolved')
+        finally:
+            monitor.close()
+
     def test_lost_acceptance_freezes_exact_revision_across_restart(self):
         self.client.call.side_effect=Unavailable()
         monitor=Monitor(self.config,self.client)
@@ -681,14 +701,20 @@ class HTTP(unittest.TestCase):
         cfg=configuration(self.directory);cfg['base_url']=self.base
         monitor=Monitor(cfg)
         try:
-            self.assertEqual(monitor.tick(lambda _:'extension_disconnected')['service_state'],'available')
+            now=int(time.time())
+            self.assertEqual(monitor.tick(lambda _:'extension_disconnected',now=now-61)['service_state'],'available')
             value=json.loads(monitor.db.execute('select content from incidents').fetchone()[0])
             route='/v1/incidents/fictional-services/'+value['incident_id']
-            self.assertEqual(self.call('GET',route)[1]['projection']['processing_state'],'open')
+            snapshot=self.call('GET',route)[1]
+            self.assertEqual(snapshot['projection']['processing_state'],'open')
+            monitor.tick(lambda _:'extension_disconnected',now=now)
+            renewed=self.call('GET',route)[1]
+            self.assertEqual(renewed['projection']['revision'],2)
+            self.assertEqual(renewed['deliveries'],snapshot['deliveries'])
             monitor.tick(lambda _:'healthy')
             result=self.call('GET',route)[1]['projection']
             self.assertEqual(result['processing_state'],'resolved')
-            self.assertEqual(result['revision'],2)
+            self.assertEqual(result['revision'],3)
             relocated=dict(cfg,targets=[dict(cfg['targets'][0],resource_ref='receiving-browser')])
             monitor.close()
             monitor=None
