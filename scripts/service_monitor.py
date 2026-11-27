@@ -739,7 +739,9 @@ class Monitor:
         severity = 'warning' if reason in ('memory_reclaim_pressure', 'native_restarted',
                                             'dmk_review_no_eligible_input', 'dmk_review_cycle_limited') else 'error'
         if prior and prior['processing_state'] == 'open':
-            if active and prior['summary'] == summary:
+            # Renew a verified unchanged condition at most once per minute.
+            # Keeping the state open preserves the existing delivery intent.
+            if active and prior['summary'] == summary and now - prior['updated_at'] < 60:
                 return
             value = dict(prior, revision=prior['revision'] + 1, updated_at=max(now, prior['updated_at']),
                          summary=summary, processing_state='open' if active else 'resolved',
